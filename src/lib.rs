@@ -6,6 +6,7 @@ use std::path::Path;
 use num_bigint::BigUint;
 use num_traits::{One, ToPrimitive, Zero};
 use sha2::{Digest, Sha256};
+use thiserror::Error;
 
 // Expose fuzzy decoding
 pub mod fuzzy;
@@ -24,33 +25,22 @@ pub const CHECKSUM_BITS: u32 = 7;
 pub const NUM_CHUNKS: usize = 3; // 3 chunks of 45 bits = 135 bits
 
 // Custom error type
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum Memo128Error {
-    IoError(io::Error),
+    #[error("IO error: {0}")]
+    IoError(#[from] io::Error),
+    
+    #[error("Invalid hex input: {0}")]
     InvalidHexInput(String),
+    
+    #[error("Dictionary error: {0}")]
     InvalidDictionary(String),
+    
+    #[error("Parsing error: {0}")]
     ParsingError(String),
+    
+    #[error("Checksum verification failed")]
     ChecksumError,
-}
-
-impl std::fmt::Display for Memo128Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Memo128Error::IoError(err) => write!(f, "IO error: {}", err),
-            Memo128Error::InvalidHexInput(msg) => write!(f, "Invalid hex input: {}", msg),
-            Memo128Error::InvalidDictionary(msg) => write!(f, "Dictionary error: {}", msg),
-            Memo128Error::ParsingError(msg) => write!(f, "Parsing error: {}", msg),
-            Memo128Error::ChecksumError => write!(f, "Checksum verification failed"),
-        }
-    }
-}
-
-impl std::error::Error for Memo128Error {}
-
-impl From<io::Error> for Memo128Error {
-    fn from(error: io::Error) -> Self {
-        Memo128Error::IoError(error)
-    }
 }
 
 // Dictionary struct for handling dictionary files
