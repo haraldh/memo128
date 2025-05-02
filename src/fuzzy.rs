@@ -9,6 +9,9 @@ use crate::{
     OBJECT_BITS, OUTCOME_BITS, SETTING_BITS,
 };
 
+/// Type representing component indices for a sentence (character, setting, action, object, outcome)
+type ComponentIndices = (usize, usize, usize, usize, usize);
+
 /// Calculate the Levenshtein distance between two strings
 ///
 /// The Levenshtein distance is a measure of the similarity between two strings.
@@ -114,7 +117,7 @@ impl FuzzyMemo128 {
     ///
     /// This is the core fuzzy parsing algorithm that attempts to segment the sentence
     /// and match each segment against dictionary entries using Levenshtein distance.
-    fn fuzzy_parse_sentence(&self, sentence: &str) -> Vec<(usize, usize, usize, usize, usize)> {
+    fn fuzzy_parse_sentence(&self, sentence: &str) -> Vec<ComponentIndices> {
         let mut results = Vec::new();
 
         // Access dictionaries through memo128 instance
@@ -129,7 +132,7 @@ impl FuzzyMemo128 {
             sentence: &'a str,
             component_idx: usize,
             current_indices: &mut Vec<usize>,
-            results: &mut Vec<(usize, usize, usize, usize, usize)>,
+            results: &mut Vec<ComponentIndices>,
             dictionaries: &[&&'a Dictionary],
             max_distance: usize,
             fuzzy_memo: &'a FuzzyMemo128,
@@ -268,7 +271,7 @@ impl FuzzyMemo128 {
         }
 
         // Process each sentence to find all plausible component sequences
-        let mut sentence_candidates: Vec<Vec<(usize, usize, usize, usize, usize)>> = Vec::new();
+        let mut sentence_candidates: Vec<Vec<ComponentIndices>> = Vec::new();
 
         for sentence in input_sentences {
             let sentence = sentence.trim();
@@ -302,9 +305,9 @@ impl FuzzyMemo128 {
     /// Recursively check all combinations of component sequences
     fn check_candidates(
         &self,
-        sentence_candidates: &[Vec<(usize, usize, usize, usize, usize)>],
+        sentence_candidates: &[Vec<ComponentIndices>],
         sentence_idx: usize,
-        current_combo: &mut Vec<(usize, usize, usize, usize, usize)>,
+        current_combo: &mut Vec<ComponentIndices>,
         valid_hex_results: &mut Vec<String>,
     ) {
         // Base case: we've assembled a complete combination of component sequences
@@ -357,7 +360,7 @@ impl FuzzyMemo128 {
     /// Reconstruct the 135-bit number from component indices
     fn reconstruct_number(
         &self,
-        component_combos: &[(usize, usize, usize, usize, usize)],
+        component_combos: &[ComponentIndices],
     ) -> BigUint {
         let mut reconstructed_135_num = BigUint::zero();
 
