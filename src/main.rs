@@ -447,7 +447,7 @@ mod tests {
             let mut file = File::create(file_path)?;
 
             for i in 0..*size {
-                writeln!(file, "test_entry_{}", i)?;
+                writeln!(file, "test entry {}", i)?;
             }
         }
 
