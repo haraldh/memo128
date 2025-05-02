@@ -5,8 +5,8 @@ use num_traits::{ToPrimitive, Zero};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    ACTION_BITS, CHECKSUM_BITS, CHUNK_BITS, Dictionary, Memo128, Memo128Error,
-    NUM_CHUNKS, OBJECT_BITS, OUTCOME_BITS, SETTING_BITS,
+    Dictionary, Memo128, Memo128Error, ACTION_BITS, CHECKSUM_BITS, CHUNK_BITS, NUM_CHUNKS,
+    OBJECT_BITS, OUTCOME_BITS, SETTING_BITS,
 };
 
 /// Calculate the Levenshtein distance between two strings
@@ -42,14 +42,18 @@ pub fn levenshtein_distance(s1: &str, s2: &str) -> usize {
     // Fill the matrix
     for i in 1..=s1_len {
         for j in 1..=s2_len {
-            let cost = if s1_chars[i - 1] == s2_chars[j - 1] { 0 } else { 1 };
+            let cost = if s1_chars[i - 1] == s2_chars[j - 1] {
+                0
+            } else {
+                1
+            };
 
             dp[i][j] = min(
                 min(
-                    dp[i - 1][j] + 1,     // deletion
-                    dp[i][j - 1] + 1,     // insertion
+                    dp[i - 1][j] + 1, // deletion
+                    dp[i][j - 1] + 1, // insertion
                 ),
-                dp[i - 1][j - 1] + cost,  // substitution
+                dp[i - 1][j - 1] + cost, // substitution
             );
         }
     }
@@ -93,14 +97,14 @@ impl FuzzyMemo128 {
         max_distance: usize,
     ) -> Vec<(usize, usize)> {
         let mut matches = Vec::new();
-        
+
         for (idx, entry) in dictionary.entries.iter().enumerate() {
             let distance = levenshtein_distance(text, entry);
             if distance <= max_distance {
                 matches.push((idx, distance));
             }
         }
-        
+
         // Sort matches by distance (closest first)
         matches.sort_by_key(|&(_, distance)| distance);
         matches
@@ -110,19 +114,16 @@ impl FuzzyMemo128 {
     ///
     /// This is the core fuzzy parsing algorithm that attempts to segment the sentence
     /// and match each segment against dictionary entries using Levenshtein distance.
-    fn fuzzy_parse_sentence(
-        &self,
-        sentence: &str,
-    ) -> Vec<(usize, usize, usize, usize, usize)> {
+    fn fuzzy_parse_sentence(&self, sentence: &str) -> Vec<(usize, usize, usize, usize, usize)> {
         let mut results = Vec::new();
-        
+
         // Access dictionaries through memo128 instance
         let character_dict = &self.memo128.get_character_dict();
         let setting_dict = &self.memo128.get_setting_dict();
         let action_dict = &self.memo128.get_action_dict();
         let object_dict = &self.memo128.get_object_dict();
         let outcome_dict = &self.memo128.get_outcome_dict();
-        
+
         // Define a recursive helper function to find sequences
         fn find_sequences<'a>(
             sentence: &'a str,
@@ -147,10 +148,10 @@ impl FuzzyMemo128 {
                 }
                 return;
             }
-            
+
             // Get the current dictionary
             let dictionary = dictionaries[component_idx];
-            
+
             // Try different segmentation points
             // Start with more greedy segments to optimize for fewer branches
             let max_segment_len = if component_idx == 4 {
@@ -161,10 +162,10 @@ impl FuzzyMemo128 {
                 // This helps reduce combinatorial explosion
                 min(
                     sentence.len(),
-                    100 // Reasonable max length for a component
+                    100, // Reasonable max length for a component
                 )
             };
-            
+
             // We'll try segmenting at spaces first for a more efficient search
             // This is a heuristic to reduce the search space
             let space_positions: Vec<usize> = sentence
@@ -172,7 +173,7 @@ impl FuzzyMemo128 {
                 .filter(|&(_, c)| c == ' ')
                 .map(|(i, _)| i)
                 .collect();
-            
+
             // Add the end of string as a potential break point
             let mut segment_points = space_positions;
             if component_idx == 4 {
@@ -184,21 +185,21 @@ impl FuzzyMemo128 {
                 // If no spaces found, use a more brute force approach
                 segment_points = (1..=max_segment_len).collect();
             }
-            
+
             for &k in &segment_points {
                 if k > sentence.len() {
                     continue;
                 }
-                
+
                 let prefix = &sentence[..k];
-                
+
                 // Get fuzzy matches for this prefix
                 let matches = fuzzy_memo.find_fuzzy_matches(prefix, dictionary, max_distance);
-                
+
                 for (idx, _) in matches {
                     // Add this index to our current path
                     current_indices.push(idx);
-                    
+
                     // Continue with the rest of the sentence
                     let remainder = if k < sentence.len() {
                         // Skip the space after this component if it exists
@@ -210,7 +211,7 @@ impl FuzzyMemo128 {
                     } else {
                         ""
                     };
-                    
+
                     // Recursively process the remainder
                     find_sequences(
                         remainder,
@@ -221,13 +222,13 @@ impl FuzzyMemo128 {
                         max_distance,
                         fuzzy_memo,
                     );
-                    
+
                     // Remove this index before trying the next match
                     current_indices.pop();
                 }
             }
         }
-        
+
         // Set up the dictionary array to pass to our recursive function
         let dictionaries = [
             character_dict,
@@ -236,7 +237,7 @@ impl FuzzyMemo128 {
             object_dict,
             outcome_dict,
         ];
-        
+
         // Start the recursive search
         let mut current_indices = Vec::with_capacity(5);
         find_sequences(
@@ -248,7 +249,7 @@ impl FuzzyMemo128 {
             self.max_levenshtein_distance,
             self,
         );
-        
+
         results
     }
 
@@ -268,11 +269,11 @@ impl FuzzyMemo128 {
 
         // Process each sentence to find all plausible component sequences
         let mut sentence_candidates: Vec<Vec<(usize, usize, usize, usize, usize)>> = Vec::new();
-        
+
         for sentence in input_sentences {
             let sentence = sentence.trim();
             let candidates = self.fuzzy_parse_sentence(sentence);
-            
+
             if candidates.is_empty() {
                 // If any sentence has no plausible parsing, we can't proceed
                 return Err(Memo128Error::ParsingError(format!(
@@ -280,13 +281,13 @@ impl FuzzyMemo128 {
                     sentence
                 )));
             }
-            
+
             sentence_candidates.push(candidates);
         }
-        
+
         // Store valid hex results
         let mut valid_hex_results = Vec::new();
-        
+
         // Generate all combinations and check each one
         self.check_candidates(
             &sentence_candidates,
@@ -294,10 +295,10 @@ impl FuzzyMemo128 {
             &mut Vec::with_capacity(NUM_CHUNKS),
             &mut valid_hex_results,
         );
-        
+
         Ok(valid_hex_results)
     }
-    
+
     /// Recursively check all combinations of component sequences
     fn check_candidates(
         &self,
@@ -310,51 +311,56 @@ impl FuzzyMemo128 {
         if sentence_idx == sentence_candidates.len() {
             // We have a complete combination, check if it's valid
             let reconstructed_135_num = self.reconstruct_number(current_combo);
-            
+
             // Separate data and checksum
             let checksum_mask = BigUint::from((1u16 << CHECKSUM_BITS) - 1);
             let checksum_bits_decoded = (&reconstructed_135_num & &checksum_mask).to_u8().unwrap();
             let data_num_decoded = &reconstructed_135_num >> CHECKSUM_BITS;
-            
+
             // Convert data_num_decoded to bytes
             let data_bytes_decoded = data_num_decoded.to_bytes_be();
-            
+
             // Pad with zeros if necessary
             let mut padded_bytes = vec![0; 16];
             let offset = 16 - data_bytes_decoded.len();
             padded_bytes[offset..].copy_from_slice(&data_bytes_decoded);
-            
+
             // Calculate and verify checksum
             let checksum_bits_calculated = self.calculate_checksum(&padded_bytes);
-            
+
             if checksum_bits_decoded == checksum_bits_calculated {
                 // Valid match! Convert to hex and add to results
                 let hex_result = Memo128::bytes_to_hex(&padded_bytes);
-                
+
                 // Only add if it's not already in the results
                 if !valid_hex_results.contains(&hex_result) {
                     valid_hex_results.push(hex_result);
                 }
             }
-            
+
             return;
         }
-        
+
         // Recursive case: try each candidate for the current sentence
         for &candidate in &sentence_candidates[sentence_idx] {
             current_combo.push(candidate);
-            self.check_candidates(sentence_candidates, sentence_idx + 1, current_combo, valid_hex_results);
+            self.check_candidates(
+                sentence_candidates,
+                sentence_idx + 1,
+                current_combo,
+                valid_hex_results,
+            );
             current_combo.pop();
         }
     }
-    
+
     /// Reconstruct the 135-bit number from component indices
     fn reconstruct_number(
         &self,
         component_combos: &[(usize, usize, usize, usize, usize)],
     ) -> BigUint {
         let mut reconstructed_135_num = BigUint::zero();
-        
+
         for &(idx_c, idx_s, idx_a, idx_o, idx_k) in component_combos {
             // Reconstruct chunk value
             let chunk_value = BigUint::from(idx_c)
@@ -363,11 +369,11 @@ impl FuzzyMemo128 {
                 | BigUint::from(idx_a) << (OBJECT_BITS + OUTCOME_BITS)
                 | BigUint::from(idx_o) << OUTCOME_BITS
                 | BigUint::from(idx_k);
-            
+
             // Append to the reconstructed number
             reconstructed_135_num = (reconstructed_135_num << CHUNK_BITS) | chunk_value;
         }
-        
+
         reconstructed_135_num
     }
 }
@@ -375,7 +381,7 @@ impl FuzzyMemo128 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_levenshtein_distance() {
         // Test cases for Levenshtein distance

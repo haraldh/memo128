@@ -29,16 +29,16 @@ pub const NUM_CHUNKS: usize = 3; // 3 chunks of 45 bits = 135 bits
 pub enum Memo128Error {
     #[error("IO error: {0}")]
     IoError(#[from] io::Error),
-    
+
     #[error("Invalid hex input: {0}")]
     InvalidHexInput(String),
-    
+
     #[error("Dictionary error: {0}")]
     InvalidDictionary(String),
-    
+
     #[error("Parsing error: {0}")]
     ParsingError(String),
-    
+
     #[error("Checksum verification failed")]
     ChecksumError,
 }
@@ -121,24 +121,24 @@ impl Memo128 {
             outcome_dict: Dictionary::load("outcome_8bit.txt", 1 << OUTCOME_BITS)?,
         })
     }
-    
+
     // Access to dictionaries for fuzzy decoding
     pub fn get_character_dict(&self) -> &Dictionary {
         &self.character_dict
     }
-    
+
     pub fn get_setting_dict(&self) -> &Dictionary {
         &self.setting_dict
     }
-    
+
     pub fn get_action_dict(&self) -> &Dictionary {
         &self.action_dict
     }
-    
+
     pub fn get_object_dict(&self) -> &Dictionary {
         &self.object_dict
     }
-    
+
     pub fn get_outcome_dict(&self) -> &Dictionary {
         &self.outcome_dict
     }

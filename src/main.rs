@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
-use memo128::Memo128;
 use memo128::fuzzy::FuzzyMemo128;
+use memo128::Memo128;
 
 #[derive(Parser)]
 #[command(name = "memo128")]
@@ -28,7 +28,7 @@ enum Commands {
         /// Maximum Levenshtein distance for fuzzy matching
         #[arg(long, default_value_t = 3)]
         max_distance: usize,
-        
+
         /// The three sentences to fuzzy decode
         sentences: Vec<String>,
     },
@@ -39,16 +39,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let memo128 = Memo128::new()?;
 
     match cli.command {
-        Commands::Encode { hex_string } => {
-            match memo128.encode(&hex_string) {
-                Ok(sentences) => {
-                    for (i, sentence) in sentences.iter().enumerate() {
-                        println!("Sentence {}: {}", i + 1, sentence);
-                    }
+        Commands::Encode { hex_string } => match memo128.encode(&hex_string) {
+            Ok(sentences) => {
+                for (i, sentence) in sentences.iter().enumerate() {
+                    println!("Sentence {}: {}", i + 1, sentence);
                 }
-                Err(e) => println!("Error: {}", e),
             }
-        }
+            Err(e) => println!("Error: {}", e),
+        },
         Commands::Decode { sentences } => {
             if sentences.len() != 3 {
                 println!("Error: decode command requires exactly 3 sentences");
@@ -60,15 +58,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Err(e) => println!("Error: {}", e),
             }
         }
-        Commands::FuzzyDecode { max_distance, sentences } => {
+        Commands::FuzzyDecode {
+            max_distance,
+            sentences,
+        } => {
             if sentences.len() != 3 {
                 println!("Error: fuzzy-decode command requires exactly 3 sentences");
                 return Ok(());
             }
-            
+
             // Create the fuzzy decoder with the specified max distance
             let fuzzy_memo128 = FuzzyMemo128::new(max_distance)?;
-            
+
             // Perform fuzzy decoding
             match fuzzy_memo128.fuzzy_decode(&sentences) {
                 Ok(results) => {
@@ -77,7 +78,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     } else {
                         println!("Found {} possible matches:", results.len());
                         for (i, hex) in results.iter().enumerate() {
-                            println!("Match {}: {} - {}", i + 1, hex, memo128.encode(hex).unwrap().join(". "));
+                            println!(
+                                "Match {}: {} - {}",
+                                i + 1,
+                                hex,
+                                memo128.encode(hex).unwrap().join(". ")
+                            );
                         }
                     }
                 }
