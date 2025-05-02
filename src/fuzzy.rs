@@ -32,8 +32,8 @@ pub fn levenshtein_distance(s1: &str, s2: &str) -> usize {
     let mut dp = vec![vec![0; s2_len + 1]; s1_len + 1];
 
     // Initialize first row and column
-    for i in 0..=s1_len {
-        dp[i][0] = i;
+    for (i, item) in dp.iter_mut().enumerate().take(s1_len + 1) {
+        item[0] = i;
     }
     for j in 0..=s2_len {
         dp[0][j] = j;
