@@ -4,9 +4,12 @@ A Rust library and CLI tool for encoding 128-bit numbers as memorable natural la
 
 ## Overview
 
-Memo128 converts cryptographic keys, blockchain addresses, and other 128-bit values into easy-to-remember sentences. It adds a 7-bit checksum for error detection and uses five dictionaries to create structured sentences that form mini-stories.
+Memo128 converts cryptographic keys, blockchain addresses, and other 128-bit values into easy-to-remember sentences. It
+adds a 7-bit checksum for error detection and uses five dictionaries to create structured sentences that form
+mini-stories.
 
 Each 128-bit value (plus 7-bit checksum) is encoded as three sentences, with each sentence containing:
+
 - Character (10 bits)
 - Setting (10 bits)
 - Action (8 bits)
@@ -48,13 +51,13 @@ Make sure to quote each sentence and provide all three sentences in the correct 
 
 ## Requirements
 
-- Rust 1.70+
+- Rust 1.74+
 - Five dictionary files in the current directory:
-  - `character_10bit.txt` (1024 entries)
-  - `setting_10bit.txt` (1024 entries)
-  - `action_8bit.txt` (256 entries)
-  - `object_9bit.txt` (512 entries)
-  - `outcome_8bit.txt` (256 entries)
+    - `character_10bit.txt` (1024 entries)
+    - `setting_10bit.txt` (1024 entries)
+    - `action_8bit.txt` (256 entries)
+    - `object_9bit.txt` (512 entries)
+    - `outcome_8bit.txt` (256 entries)
 
 ## How It Works
 
