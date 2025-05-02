@@ -3,6 +3,7 @@ a binary philosopher
 a binary soul
 a bored immortal
 a brave mouse
+a brilliant detective
 a brilliant inventor
 a brilliant mathematician
 a caffeine-addicted programmer
@@ -68,6 +69,7 @@ a displaced time agent
 a distracted scientist
 a drunken poet
 a fading shadow
+a fairy queen
 a fifth-dimensional tourist
 a forgetful librarian
 a forgetful wizard
@@ -484,8 +486,6 @@ a whispering shadow
 a witty professor
 a worried parent
 my neighbour's dog
-Queen Mab
-Sherlock Holmes
 the absent-minded professor
 the accidental hero
 the algorithm
