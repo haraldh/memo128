@@ -1,5 +1,5 @@
 /.idea
 /target
 /logs
-
+/.direnv
 **/.claude/settings.local.json
