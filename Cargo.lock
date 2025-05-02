@@ -113,6 +113,7 @@ name = "memo128"
 version = "0.1.0"
 dependencies = [
  "num-bigint",
+ "num-traits",
  "sha2",
  "tempfile",
 ]

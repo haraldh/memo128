@@ -5,6 +5,7 @@ use std::num::ParseIntError;
 use std::path::Path;
 use sha2::{Sha256, Digest};
 use num_bigint::BigUint;
+use num_traits::cast::ToPrimitive;
 
 const CHARACTER_DICT_PATH: &str = "character_10bit.txt";
 const SETTING_DICT_PATH: &str = "setting_10bit.txt";
@@ -14,6 +15,7 @@ const OUTCOME_DICT_PATH: &str = "outcome_8bit.txt";
 
 // Error types for the encoder/decoder
 #[derive(Debug)]
+#[allow(dead_code)]  // Allow unused fields since we need them for error context
 enum Error {
     IoError(io::Error),
     InvalidHexInput(ParseIntError),
@@ -182,40 +184,30 @@ impl SentenceEncoder {
         let checksum_bits = self.calculate_checksum(&data_bytes);
 
         // 4. Convert to BigUint (128-bit integer)
-        let mut data_num = BigUint::from_bytes_be(&data_bytes);
+        let data_num = BigUint::from_bytes_be(&data_bytes);
 
         // 5. Combine data and checksum into 135-bit number N
-        data_num = data_num << 7 | BigUint::from(checksum_bits);
+        let combined_num = (data_num << 7) | BigUint::from(checksum_bits);
 
         // 6. Initialize output
         let mut output_sentences = Vec::with_capacity(3);
 
         // 7. Process 3 chunks
         for chunk_idx in 0..3 {
-            // Extract chunk from the right (we'll work backwards)
+            // Extract chunk - each chunk is 45 bits (135 bits total split into 3)
             let shift_bits = (2 - chunk_idx) * 45;
             let mask = (BigUint::from(1u64) << 45) - 1u64;
-            let chunk_value = (&data_num >> shift_bits) & &mask;
+            let chunk_value: BigUint = (&combined_num >> shift_bits) & &mask;
 
-            // Extract indices from chunk_value (from MSB to LSB)
-            let chunk_value_bytes = chunk_value.to_bytes_be();
-            let chunk_value_u64 = u64::from_be_bytes([
-                if chunk_value_bytes.len() > 0 { chunk_value_bytes[chunk_value_bytes.len() - 6] } else { 0 },
-                if chunk_value_bytes.len() > 0 { chunk_value_bytes[chunk_value_bytes.len() - 5] } else { 0 },
-                if chunk_value_bytes.len() > 0 { chunk_value_bytes[chunk_value_bytes.len() - 4] } else { 0 },
-                if chunk_value_bytes.len() > 0 { chunk_value_bytes[chunk_value_bytes.len() - 3] } else { 0 },
-                if chunk_value_bytes.len() > 0 { chunk_value_bytes[chunk_value_bytes.len() - 2] } else { 0 },
-                if chunk_value_bytes.len() > 0 { chunk_value_bytes[chunk_value_bytes.len() - 1] } else { 0 },
-                0,
-                0,
-            ]);
-
-            // Extract indices properly
-            let idx_c = (chunk_value_u64 >> 35) & ((1 << 10) - 1);  // 10 bits for character
-            let idx_s = (chunk_value_u64 >> 25) & ((1 << 10) - 1);  // 10 bits for setting
-            let idx_a = (chunk_value_u64 >> 17) & ((1 << 8) - 1);   // 8 bits for action
-            let idx_o = (chunk_value_u64 >> 8) & ((1 << 9) - 1);    // 9 bits for object
-            let idx_k = chunk_value_u64 & ((1 << 8) - 1);           // 8 bits for outcome
+            // Convert to u64 for easier bit manipulation
+            let chunk_u64 = chunk_value.to_u64().unwrap_or(0);
+            
+            // Extract indices - the chunk is 45 bits broken down as 10+10+8+9+8 = 45 bits
+            let idx_c = (chunk_u64 >> 35) & 0x3FF;  // 10 bits for character (bits 35-44)
+            let idx_s = (chunk_u64 >> 25) & 0x3FF;  // 10 bits for setting (bits 25-34)
+            let idx_a = (chunk_u64 >> 17) & 0xFF;   // 8 bits for action (bits 17-24)
+            let idx_o = (chunk_u64 >> 8) & 0x1FF;   // 9 bits for object (bits 8-16)
+            let idx_k = chunk_u64 & 0xFF;           // 8 bits for outcome (bits 0-7)
 
             // Lookup words from dictionaries
             let word_c = self.character_dict.get_word(idx_c as usize)?;
@@ -245,9 +237,9 @@ impl SentenceEncoder {
         // 2. Initialize 135-bit number
         let mut reconstructed_135_num = BigUint::from(0u32);
 
-        // 3. Process 3 sentences
-        for sentence in input_sentences {
-            let parts: Vec<&str> = sentence.trim().split_whitespace().collect();
+        // 3. Process 3 sentences in order
+        for (i, sentence) in input_sentences.iter().enumerate() {
+            let parts: Vec<&str> = sentence.split_whitespace().collect();
             if parts.len() != 5 {
                 return Err(Error::InvalidSentenceFormat(format!(
                     "Expected 5 words in sentence, found {}: '{}'",
@@ -276,13 +268,15 @@ impl SentenceEncoder {
                 BigUint::from(idx_o) << 8 |
                 BigUint::from(idx_k);
 
-            // Append to the reconstructed number
-            reconstructed_135_num = reconstructed_135_num << 45 | chunk_value;
+            // Based on the sentence position, place the chunk in the appropriate position
+            // First sentence (i=0) is the leftmost 45 bits of the 135-bit number
+            let shift_amount = (2 - i) * 45;
+            reconstructed_135_num |= chunk_value << shift_amount;
         }
 
         // 4. Separate data and checksum
         let checksum_bits_decoded = &reconstructed_135_num & BigUint::from(0x7Fu32);
-        let data_num_decoded = &reconstructed_135_num >> 7;
+        let data_num_decoded: BigUint = &reconstructed_135_num >> 7;
 
         // 5. Convert data_num_decoded to bytes
         let data_bytes_decoded = data_num_decoded.to_bytes_be();
@@ -290,9 +284,7 @@ impl SentenceEncoder {
         // Ensure we have exactly 16 bytes
         let mut padded_bytes = vec![0u8; 16];
         let offset = 16 - data_bytes_decoded.len();
-        for i in 0..data_bytes_decoded.len() {
-            padded_bytes[i + offset] = data_bytes_decoded[i];
-        }
+        padded_bytes[offset..(data_bytes_decoded.len() + offset)].copy_from_slice(&data_bytes_decoded[..]);
 
         // 6. Verify checksum
         let calculated_checksum = self.calculate_checksum(&padded_bytes);
@@ -357,12 +349,60 @@ fn main() -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::write;
     use std::io::Write;
     use tempfile::tempdir;
 
-    // Helper function to create test dictionaries
-    fn create_test_dictionaries() -> tempfile::TempDir {
+    // Extension method for Dictionary to load from a full path
+    impl Dictionary {
+        fn load_with_full_path<P: AsRef<Path>>(&mut self, full_path: P) -> Result<(), Error> {
+            let file = File::open(&full_path).map_err(|e| {
+                Error::IoError(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("Failed to open {}: {}", self.name, e),
+                ))
+            })?;
+
+            let reader = BufReader::new(file);
+            self.words.clear();
+            self.reverse_lookup.clear();
+
+            for (idx, line) in reader.lines().enumerate() {
+                let word = line?.trim().to_string();
+                if word.is_empty() {
+                    return Err(Error::InvalidDictionary(format!(
+                        "Empty word at line {} in {}",
+                        idx + 1, self.name
+                    )));
+                }
+
+                if self.reverse_lookup.contains_key(&word) {
+                    return Err(Error::InvalidDictionary(format!(
+                        "Duplicate word '{}' in {}",
+                        word, self.name
+                    )));
+                }
+
+                self.reverse_lookup.insert(word.clone(), idx);
+                self.words.push(word);
+            }
+
+            // Validate dictionary size
+            let expected_size = self.expected_size();
+            if self.words.len() != expected_size {
+                return Err(Error::InvalidDictionary(format!(
+                    "Dictionary {} has {} entries, expected {}",
+                    self.name,
+                    self.words.len(),
+                    expected_size
+                )));
+            }
+
+            Ok(())
+        }
+    }
+
+    // Helper function to create test dictionaries and set up an encoder
+    fn create_test_encoder() -> (tempfile::TempDir, SentenceEncoder) {
         let dir = tempdir().unwrap();
 
         // Create character dictionary (10-bit = 1024 entries)
@@ -400,15 +440,23 @@ mod tests {
             writeln!(outcome_file, "outcome_{}", i).unwrap();
         }
 
-        dir
+        // Create and set up the encoder
+        let mut encoder = SentenceEncoder::new();
+        
+        // Load dictionaries with full paths
+        encoder.character_dict.load_with_full_path(char_path).unwrap();
+        encoder.setting_dict.load_with_full_path(setting_path).unwrap();
+        encoder.action_dict.load_with_full_path(action_path).unwrap();
+        encoder.object_dict.load_with_full_path(object_path).unwrap();
+        encoder.outcome_dict.load_with_full_path(outcome_path).unwrap();
+
+        (dir, encoder)
     }
 
     #[test]
     fn test_encode_decode_roundtrip() {
-        let _dir = create_test_dictionaries();
-
-        let mut encoder = SentenceEncoder::new();
-        encoder.load_dictionaries().unwrap();
+        // Create test dictionaries and get encoder
+        let (_dir, encoder) = create_test_encoder();
 
         // Test with a known 128-bit hex value
         let test_hex = "0123456789abcdef0123456789abcdef";
@@ -419,15 +467,21 @@ mod tests {
 
         // Decode
         let decoded_hex = encoder.decode(&sentences).unwrap();
+        
+        // Verify that the decoded hex matches the original
         assert_eq!(decoded_hex, test_hex);
+        
+        // Test another value to be thorough
+        let test_hex2 = "ffffffffffffffffffffffffffffffff";
+        let sentences2 = encoder.encode(test_hex2).unwrap();
+        let decoded_hex2 = encoder.decode(&sentences2).unwrap();
+        assert_eq!(decoded_hex2, test_hex2);
     }
 
     #[test]
     fn test_checksum_validation() {
-        let _dir = create_test_dictionaries();
-
-        let mut encoder = SentenceEncoder::new();
-        encoder.load_dictionaries().unwrap();
+        // Create test dictionaries and get encoder
+        let (_dir, encoder) = create_test_encoder();
 
         // Generate a valid encoding
         let test_hex = "ffffffffffffffffffffffffffffffff";
@@ -435,10 +489,19 @@ mod tests {
 
         // Modify a sentence to cause checksum failure
         let mut bad_sentences = sentences.clone();
+        
+        // Get the parts of the first sentence
         let parts: Vec<&str> = bad_sentences[0].split_whitespace().collect();
-
+        
+        // Get a different character word than the original
+        // The word format in our test dictionaries is "character_X" where X is an index
+        // So we'll just use a different index
+        let original_index = parts[0].strip_prefix("character_").unwrap_or("0");
+        let original_index = original_index.parse::<usize>().unwrap_or(0);
+        let new_index = (original_index + 1) % 1024; // Ensure it's different
+        
         // Change the character word to something that exists but is different
-        bad_sentences[0] = format!("character_42 {} {} {} {}", parts[1], parts[2], parts[3], parts[4]);
+        bad_sentences[0] = format!("character_{} {} {} {} {}", new_index, parts[1], parts[2], parts[3], parts[4]);
 
         // Decoding should fail with checksum error
         let result = encoder.decode(&bad_sentences);
