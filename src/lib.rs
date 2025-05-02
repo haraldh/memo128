@@ -1,3 +1,102 @@
+//! # Memo128
+//!
+//! A library for encoding 128-bit values as memorable natural language sentences.
+//!
+//! ## Overview
+//!
+//! Memo128 converts cryptographic keys, blockchain addresses, and other 128-bit values
+//! into easy-to-remember sentences. It adds a 7-bit checksum for error detection and
+//! uses five dictionaries to create structured sentences that form mini-stories.
+//!
+//! Each 128-bit value (plus 7-bit checksum) is encoded as three sentences, with each
+//! sentence containing:
+//!
+//! - Character (10 bits): Who is performing the action
+//! - Setting (10 bits): Where the action takes place
+//! - Action (8 bits): What is being done
+//! - Object (9 bits): What is being acted upon
+//! - Outcome (8 bits): The result of the action
+//!
+//! ## Basic Usage
+//!
+//! ```rust,no_run
+//! # // Note: This example requires dictionary files to be present, so we use no_run
+//! use memo128::Memo128;
+//!
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     // Create a new Memo128 instance
+//!     let memo128 = Memo128::new()?;
+//!
+//!     // Encode a 128-bit value (32-character hex string)
+//!     let hex_input = "0123456789abcdef0123456789abcdef";
+//!     let sentences = memo128.encode(hex_input)?;
+//!
+//!     // Print the encoded sentences
+//!     for (i, sentence) in sentences.iter().enumerate() {
+//!         println!("Sentence {}: {}", i + 1, sentence);
+//!     }
+//!
+//!     // Decode the sentences back to the original value
+//!     let hex_output = memo128.decode(&sentences)?;
+//!     assert_eq!(hex_input, hex_output);
+//!
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ## Fuzzy Decoding
+//!
+//! Memo128 also supports fuzzy decoding for imperfect sentence recall:
+//!
+//! ```rust,no_run
+//! # // Note: This example requires dictionary files to be present, so we use no_run
+//! use memo128::fuzzy::FuzzyMemo128;
+//!
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     // Create a fuzzy decoder with maximum Levenshtein distance of 2
+//!     let fuzzy_decoder = FuzzyMemo128::new(2)?;
+//!
+//!     // Decode sentences with typos or rephrasing
+//!     let imperfect_sentences = vec![
+//!         "a brave mouze inside a cosmic cathedral disconnected a question of time but it was too late".to_string(),
+//!         "a worried parent within a cosmic algorithm accepted a math impossibility as code predicted".to_string(),
+//!         "the fjord elder inside the particle accelerator stole a reality glitch rebooting systems".to_string(),
+//!     ];
+//!
+//!     // Get all possible valid matches
+//!     let possible_matches = fuzzy_decoder.fuzzy_decode(&imperfect_sentences)?;
+//!
+//!     // Display matches
+//!     for (i, hex) in possible_matches.iter().enumerate() {
+//!         println!("Match {}: {}", i + 1, hex);
+//!     }
+//!
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ## Requirements
+//!
+//! Memo128 requires five dictionary files in the working directory:
+//!
+//! - `character_10bit.txt` (1024 entries)
+//! - `setting_10bit.txt` (1024 entries)
+//! - `action_8bit.txt` (256 entries)
+//! - `object_9bit.txt` (512 entries)
+//! - `outcome_8bit.txt` (256 entries)
+//!
+//! ## How It Works
+//!
+//! 1. Input: A 32-character hexadecimal string (128 bits)
+//! 2. Calculate a 7-bit checksum using SHA-256
+//! 3. Combine into a 135-bit sequence
+//! 4. Split into three 45-bit chunks
+//! 5. Map each chunk to sentence components using dictionaries
+//! 6. Assemble three memorable sentences
+//!
+//! When decoding, the process is reversed and the checksum is verified to
+//! detect errors.
+
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
@@ -8,48 +107,82 @@ use num_traits::{One, ToPrimitive, Zero};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-// Expose fuzzy decoding
+// Expose fuzzy decoding module
 pub mod fuzzy;
 
-// Constants for bit allocations
+/// Number of bits used for the Character component in each sentence (10 bits = 1024 possibilities)
 pub const CHARACTER_BITS: u32 = 10;
+
+/// Number of bits used for the Setting component in each sentence (10 bits = 1024 possibilities)
 pub const SETTING_BITS: u32 = 10;
+
+/// Number of bits used for the Action component in each sentence (8 bits = 256 possibilities)
 pub const ACTION_BITS: u32 = 8;
+
+/// Number of bits used for the Object component in each sentence (9 bits = 512 possibilities)
 pub const OBJECT_BITS: u32 = 9;
+
+/// Number of bits used for the Outcome component in each sentence (8 bits = 256 possibilities)
 pub const OUTCOME_BITS: u32 = 8;
 
+/// Total number of bits per chunk/sentence (45 bits)
 pub const CHUNK_BITS: u32 =
-    CHARACTER_BITS + SETTING_BITS + ACTION_BITS + OBJECT_BITS + OUTCOME_BITS; // 45 bits
+    CHARACTER_BITS + SETTING_BITS + ACTION_BITS + OBJECT_BITS + OUTCOME_BITS;
+
+/// Number of bits used for checksum (7 bits, allowing for values 0-127)
 pub const CHECKSUM_BITS: u32 = 7;
 
-pub const NUM_CHUNKS: usize = 3; // 3 chunks of 45 bits = 135 bits
+/// Number of chunks/sentences used to encode the complete 128-bit payload
+pub const NUM_CHUNKS: usize = 3; // 3 chunks of 45 bits = 135 bits (128 data + 7 checksum)
 
-// Custom error type
+/// Errors that can occur when using Memo128
 #[derive(Debug, Error)]
 pub enum Memo128Error {
+    /// Wraps standard IO errors that occur during file operations
     #[error("IO error: {0}")]
     IoError(#[from] io::Error),
 
+    /// Errors related to invalid hex input format or content
     #[error("Invalid hex input: {0}")]
     InvalidHexInput(String),
 
+    /// Errors related to dictionary loading or validation
     #[error("Dictionary error: {0}")]
     InvalidDictionary(String),
 
+    /// Errors that occur during sentence parsing
     #[error("Parsing error: {0}")]
     ParsingError(String),
 
+    /// Error when checksum verification fails during decoding
     #[error("Checksum verification failed")]
     ChecksumError,
 }
 
-// Dictionary struct for handling dictionary files
+/// Dictionary of phrases used for each component of the sentences
+///
+/// Each dictionary contains a specific number of entries corresponding to
+/// the bit allocation for its associated component (e.g., Character, Setting, etc.).
+/// The dictionary provides both forward lookup (index -> phrase) and reverse
+/// lookup (phrase -> index) capabilities.
 pub struct Dictionary {
+    /// Vector of phrases, indexed by their position (which corresponds to the encoded bit value)
     pub entries: Vec<String>,
+
+    /// Hashmap for efficient reverse lookup (phrase to index)
     pub reverse_lookup: HashMap<String, usize>,
 }
 
 impl Dictionary {
+    /// Creates a new empty dictionary with pre-allocated capacity
+    ///
+    /// # Arguments
+    ///
+    /// * `expected_size` - The expected number of entries in the dictionary
+    ///
+    /// # Returns
+    ///
+    /// A new Dictionary instance with capacity for the specified number of entries
     pub fn new(expected_size: usize) -> Self {
         Dictionary {
             entries: Vec::with_capacity(expected_size),
@@ -57,6 +190,24 @@ impl Dictionary {
         }
     }
 
+    /// Loads a dictionary from a file
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the dictionary file
+    /// * `expected_size` - The expected number of entries (must match exactly)
+    ///
+    /// # Returns
+    ///
+    /// Result containing either the loaded Dictionary or a Memo128Error
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The file cannot be opened
+    /// - The dictionary contains more than the expected number of entries
+    /// - The dictionary contains duplicate entries
+    /// - The dictionary contains fewer than the expected number of entries
     pub fn load<P: AsRef<Path>>(path: P, expected_size: usize) -> Result<Self, Memo128Error> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
@@ -97,21 +248,64 @@ impl Dictionary {
         Ok(dict)
     }
 
+    /// Retrieves a phrase from the dictionary by its index
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The index of the phrase to retrieve
+    ///
+    /// # Returns
+    ///
+    /// An Option containing a reference to the String if found, or None if the index is out of bounds
     pub fn get(&self, index: usize) -> Option<&String> {
         self.entries.get(index)
     }
 }
 
-// Memo128 struct for handling encoding and decoding
+/// Main struct for encoding and decoding 128-bit values as memorable sentences
+///
+/// Memo128 encodes 128-bit values into three memorable sentences, with each sentence containing:
+/// - Character (10 bits): Who is performing the action
+/// - Setting (10 bits): Where the action takes place
+/// - Action (8 bits): What is being done
+/// - Object (9 bits): What is being acted upon
+/// - Outcome (8 bits): The result of the action
+///
+/// The system adds a 7-bit checksum for error detection, bringing the total to 135 bits.
 pub struct Memo128 {
+    /// Dictionary for the character component (10 bits = 1024 entries)
     character_dict: Dictionary,
+
+    /// Dictionary for the setting component (10 bits = 1024 entries)
     setting_dict: Dictionary,
+
+    /// Dictionary for the action component (8 bits = 256 entries)
     action_dict: Dictionary,
+
+    /// Dictionary for the object component (9 bits = 512 entries)
     object_dict: Dictionary,
+
+    /// Dictionary for the outcome component (8 bits = 256 entries)
     outcome_dict: Dictionary,
 }
 
 impl Memo128 {
+    /// Creates a new Memo128 instance by loading all required dictionaries
+    ///
+    /// Loads dictionaries from the current working directory:
+    /// - character_10bit.txt
+    /// - setting_10bit.txt
+    /// - action_8bit.txt
+    /// - object_9bit.txt
+    /// - outcome_8bit.txt
+    ///
+    /// # Returns
+    ///
+    /// Result containing either the initialized Memo128 instance or a Memo128Error
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any dictionary fails to load
     pub fn new() -> Result<Self, Memo128Error> {
         Ok(Memo128 {
             character_dict: Dictionary::load("character_10bit.txt", 1 << CHARACTER_BITS)?,
@@ -122,28 +316,60 @@ impl Memo128 {
         })
     }
 
-    // Access to dictionaries for fuzzy decoding
+    /// Gets a reference to the Character dictionary
+    ///
+    /// # Returns
+    ///
+    /// Reference to the Character dictionary
     pub fn get_character_dict(&self) -> &Dictionary {
         &self.character_dict
     }
 
+    /// Gets a reference to the Setting dictionary
+    ///
+    /// # Returns
+    ///
+    /// Reference to the Setting dictionary
     pub fn get_setting_dict(&self) -> &Dictionary {
         &self.setting_dict
     }
 
+    /// Gets a reference to the Action dictionary
+    ///
+    /// # Returns
+    ///
+    /// Reference to the Action dictionary
     pub fn get_action_dict(&self) -> &Dictionary {
         &self.action_dict
     }
 
+    /// Gets a reference to the Object dictionary
+    ///
+    /// # Returns
+    ///
+    /// Reference to the Object dictionary
     pub fn get_object_dict(&self) -> &Dictionary {
         &self.object_dict
     }
 
+    /// Gets a reference to the Outcome dictionary
+    ///
+    /// # Returns
+    ///
+    /// Reference to the Outcome dictionary
     pub fn get_outcome_dict(&self) -> &Dictionary {
         &self.outcome_dict
     }
 
-    // Calculate 7-bit checksum from 128-bit data
+    /// Calculates a 7-bit checksum from 128-bit data using SHA-256
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The 16-byte array (128 bits) to calculate checksum for
+    ///
+    /// # Returns
+    ///
+    /// A 7-bit checksum value (0-127) derived from the first byte of the SHA-256 hash
     fn calculate_checksum(&self, data: &[u8]) -> u8 {
         let mut hasher = Sha256::new();
         hasher.update(data);
@@ -152,7 +378,21 @@ impl Memo128 {
         (result[0] >> 1) & 0x7F
     }
 
-    // Convert hex string to bytes
+    /// Converts a 32-character hex string to a 16-byte array
+    ///
+    /// # Arguments
+    ///
+    /// * `hex` - A 32-character hexadecimal string representing 128 bits
+    ///
+    /// # Returns
+    ///
+    /// Result containing either a `Vec<u8>` with 16 bytes or a Memo128Error
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The input is not exactly 32 characters
+    /// - The input contains invalid hex characters
     pub fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, Memo128Error> {
         if hex.len() != 32 {
             return Err(Memo128Error::InvalidHexInput(
@@ -176,7 +416,15 @@ impl Memo128 {
         Ok(bytes)
     }
 
-    // Convert bytes to hex string
+    /// Converts a byte array to a hex string
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - Byte array to convert to hex
+    ///
+    /// # Returns
+    ///
+    /// A lowercase hexadecimal string representation of the bytes
     pub fn bytes_to_hex(bytes: &[u8]) -> String {
         let mut result = String::with_capacity(bytes.len() * 2);
         for &b in bytes {
@@ -186,7 +434,32 @@ impl Memo128 {
         result
     }
 
-    // Encode 128-bit number to 3 sentences
+    /// Encodes a 128-bit value (as a 32-character hex string) into three memorable sentences
+    ///
+    /// # Arguments
+    ///
+    /// * `hex_input` - A 32-character hexadecimal string representing 128 bits
+    ///
+    /// # Returns
+    ///
+    /// Result containing either a Vec of three sentences or a Memo128Error
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The hex input is invalid (wrong length or contains non-hex characters)
+    /// - There is a problem accessing dictionary entries
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use memo128::Memo128;
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let memo128 = Memo128::new()?;
+    /// let sentences = memo128.encode("0123456789abcdef0123456789abcdef")?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn encode(&self, hex_input: &str) -> Result<Vec<String>, Memo128Error> {
         // Convert hex to bytes
         let data_bytes = Self::hex_to_bytes(hex_input)?;
@@ -271,7 +544,23 @@ impl Memo128 {
         Ok(output_sentences)
     }
 
-    // Parse a sentence back into its component phrases
+    /// Parses a sentence into its five component indices
+    ///
+    /// This method tries all possible dictionary entries to find valid phrases that
+    /// match the given sentence structure. It's an exact matching algorithm, unlike
+    /// the fuzzy approach used in the fuzzy decoder.
+    ///
+    /// # Arguments
+    ///
+    /// * `sentence` - The sentence to parse
+    ///
+    /// # Returns
+    ///
+    /// Result containing either a tuple of five component indices or a Memo128Error
+    ///
+    /// # Errors
+    ///
+    /// Returns a ParsingError if the sentence cannot be parsed using the dictionaries
     fn parse_sentence(
         &self,
         sentence: &str,
@@ -346,7 +635,38 @@ impl Memo128 {
         )))
     }
 
-    // Decode 3 sentences back to 128-bit hex
+    /// Decodes three sentences back to the original 128-bit value as a hex string
+    ///
+    /// # Arguments
+    ///
+    /// * `input_sentences` - A slice of three strings containing the sentences to decode
+    ///
+    /// # Returns
+    ///
+    /// Result containing either the original 32-character hex string or a Memo128Error
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The number of sentences is not exactly 3
+    /// - Any sentence cannot be parsed
+    /// - The checksum verification fails (indicating an error in one of the sentences)
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use memo128::Memo128;
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let memo128 = Memo128::new()?;
+    /// let sentences = vec![
+    ///     "a brave mouse inside a cosmic cathedral disconnected a question of time but it was already too late".to_string(),
+    ///     "a worried parent within the cosmic algorithm accepted a mathematical impossibility as code predicted".to_string(),
+    ///     "the fjord elder inside a particle accelerator stole a reality glitch rebooting the system".to_string(),
+    /// ];
+    /// let hex_value = memo128.decode(&sentences)?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn decode(&self, input_sentences: &[String]) -> Result<String, Memo128Error> {
         if input_sentences.len() != NUM_CHUNKS {
             return Err(Memo128Error::ParsingError(format!(

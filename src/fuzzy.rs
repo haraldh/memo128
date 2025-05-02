@@ -1,3 +1,40 @@
+//! Fuzzy decoding module for Memo128
+//!
+//! This module extends Memo128 with fuzzy matching capabilities, allowing for the
+//! decoding of imperfect or misremembered sentences. It uses the Levenshtein distance
+//! algorithm to match phrases that might contain typos, minor rephrasing, or word form
+//! changes.
+//!
+//! ## Features
+//!
+//! - Levenshtein distance calculation to measure string similarity
+//! - Configurable fuzzy matching threshold
+//! - Multiple potential matches when ambiguities exist
+//! - Sentence segmentation and component matching
+//! - Checksum validation to ensure valid matches
+//!
+//! ## Usage
+//!
+//! ```rust,no_run
+//! # // Note: This example requires dictionary files to be present, so we use no_run
+//! # use memo128::fuzzy::FuzzyMemo128;
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! // Create a fuzzy decoder with maximum Levenshtein distance of 2
+//! let fuzzy_decoder = FuzzyMemo128::new(2)?;
+//!
+//! // Decode sentences with imperfections (typos, rephrasing, etc.)
+//! let imperfect_sentences = vec![
+//!     "a brave mouze inside a cosmic cathedral disconnected a question of time but it was too late".to_string(),
+//!     "a worried parent within a cosmic algorithm accepted a math impossibility as code predicted".to_string(),
+//!     "the fjord elder inside the particle accelerator stole a reality glitch rebooting systems".to_string(),
+//! ];
+//!
+//! // Get all possible valid matches
+//! let possible_matches = fuzzy_decoder.fuzzy_decode(&imperfect_sentences)?;
+//! # Ok(())
+//! # }
+//! ```
+
 use std::cmp::min;
 
 use num_bigint::BigUint;
@@ -17,6 +54,31 @@ type ComponentIndices = (usize, usize, usize, usize, usize);
 /// The Levenshtein distance is a measure of the similarity between two strings.
 /// It represents the minimum number of single-character edits (insertions, deletions,
 /// or substitutions) required to change one string into the other.
+///
+/// # Arguments
+///
+/// * `s1` - First string to compare
+/// * `s2` - Second string to compare
+///
+/// # Returns
+///
+/// The Levenshtein distance between the two strings
+///
+/// # Examples
+///
+/// ```
+/// use memo128::fuzzy::levenshtein_distance;
+///
+/// // Identical strings have distance 0
+/// assert_eq!(levenshtein_distance("hello", "hello"), 0);
+///
+/// // Changing one character is distance 1
+/// assert_eq!(levenshtein_distance("hello", "hallo"), 1);
+///
+/// // Adding/removing one character is distance 1
+/// assert_eq!(levenshtein_distance("hello", "hell"), 1);
+/// assert_eq!(levenshtein_distance("hello", "helloo"), 1);
+/// ```
 pub fn levenshtein_distance(s1: &str, s2: &str) -> usize {
     // Handle empty strings
     if s1.is_empty() {
@@ -69,13 +131,47 @@ pub fn levenshtein_distance(s1: &str, s2: &str) -> usize {
 ///
 /// This structure extends the functionality of Memo128 with fuzzy matching capabilities,
 /// allowing decoding of imperfect sentences that might contain typos, minor rephrasing, etc.
+/// It uses the Levenshtein distance algorithm to match sentence components with dictionary
+/// entries.
 pub struct FuzzyMemo128 {
+    /// Reference to the standard Memo128 instance with dictionaries
     memo128: Memo128,
+
+    /// Maximum allowed Levenshtein distance for fuzzy matching
+    /// Higher values allow more flexible matching but may increase computation time
     max_levenshtein_distance: usize,
 }
 
 impl FuzzyMemo128 {
     /// Create a new FuzzyMemo128 instance with default dictionaries
+    ///
+    /// # Arguments
+    ///
+    /// * `max_levenshtein_distance` - Maximum Levenshtein distance to allow when matching phrases.
+    ///   - 0: Only exact matches (equivalent to standard Memo128)
+    ///   - 1: Allow minor typos like "mouze" instead of "mouse"
+    ///   - 2: Allow word form changes like "systems" vs "system"
+    ///   - 3+: Allow more extensive rephrasing, but may be slow and less accurate
+    ///
+    /// # Returns
+    ///
+    /// Result containing either the initialized FuzzyMemo128 instance or a Memo128Error
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying Memo128 instance fails to initialize
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # // Note: This example requires dictionary files to be present, so we use no_run
+    /// # use memo128::fuzzy::FuzzyMemo128;
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// // Create a fuzzy decoder with max Levenshtein distance of 2
+    /// let fuzzy_decoder = FuzzyMemo128::new(2)?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn new(max_levenshtein_distance: usize) -> Result<Self, Memo128Error> {
         Ok(FuzzyMemo128 {
             memo128: Memo128::new()?,
@@ -260,7 +356,51 @@ impl FuzzyMemo128 {
     ///
     /// This function takes 3 potentially imperfect sentences and attempts to find
     /// all possible 128-bit payloads that could plausibly correspond to them and
-    /// satisfy the checksum validation.
+    /// satisfy the checksum validation. Unlike the standard `decode` method in `Memo128`,
+    /// this function can handle typos, minor rephrasing, and word form changes.
+    ///
+    /// # Arguments
+    ///
+    /// * `input_sentences` - A slice of three strings containing the sentences to decode
+    ///
+    /// # Returns
+    ///
+    /// Result containing either a Vec of possible 32-character hex strings or a Memo128Error
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The number of sentences is not exactly 3
+    /// - No plausible fuzzy matches can be found for any of the sentences
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # // Note: This example requires dictionary files to be present, so we use no_run
+    /// # use memo128::fuzzy::FuzzyMemo128;
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let fuzzy_decoder = FuzzyMemo128::new(2)?;
+    ///
+    /// // Note the typos and word form changes compared to the original:
+    /// // "mouze" instead of "mouse", "within a cosmic" instead of "within the cosmic",
+    /// // "rebooting systems" instead of "rebooting the system"
+    /// let imperfect_sentences = vec![
+    ///     "a brave mouze inside a cosmic cathedral disconnected a question of time but it was already too late".to_string(),
+    ///     "a worried parent within a cosmic algorithm accepted a mathematical impossibility as code predicted".to_string(),
+    ///     "the fjord elder inside a particle accelerator stole a reality glitch rebooting systems".to_string(),
+    /// ];
+    ///
+    /// let possible_hex_values = fuzzy_decoder.fuzzy_decode(&imperfect_sentences)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Notes
+    ///
+    /// - The function may return multiple possible matches if the imperfect sentences
+    ///   can be interpreted in different ways that satisfy the checksum
+    /// - Higher `max_levenshtein_distance` values will allow more flexibility but may
+    ///   increase computation time and possibly return false positives
     pub fn fuzzy_decode(&self, input_sentences: &[String]) -> Result<Vec<String>, Memo128Error> {
         if input_sentences.len() != NUM_CHUNKS {
             return Err(Memo128Error::ParsingError(format!(
