@@ -189,23 +189,62 @@ impl FuzzyMemo128 {
     }
 
     /// Find all possible matches within the given Levenshtein distance
+    /// 
+    /// # Arguments
+    ///
+    /// * `text` - The text segment to find matches for
+    /// * `dictionary` - The dictionary to search in
+    /// * `max_distance` - Maximum allowed Levenshtein distance
+    /// 
+    /// # Returns
+    ///
+    /// A vector of tuples containing (dictionary index, Levenshtein distance, entry length)
+    /// The entries are sorted by distance (closest first) and then by length (longer entries first)
     fn find_fuzzy_matches(
         &self,
         text: &str,
         dictionary: &Dictionary,
         max_distance: usize,
-    ) -> Vec<(usize, usize)> {
+    ) -> Vec<(usize, usize, usize)> {
         let mut matches = Vec::new();
 
+        // Calculate the minimum length of dictionary entries to consider
+        // This optimization helps avoid checking entries that are too short
+        let min_len = if text.len() > max_distance {
+            text.len() - max_distance
+        } else {
+            0
+        };
+
+        // Calculate the maximum length of dictionary entries to consider
+        // This optimization helps avoid checking entries that are too long
+        let max_len = text.len() + max_distance;
+
         for (idx, entry) in dictionary.entries.iter().enumerate() {
+            // Skip entries that are too short or too long (quick filter)
+            if entry.len() < min_len || entry.len() > max_len {
+                continue;
+            }
+
             let distance = levenshtein_distance(text, entry);
             if distance <= max_distance {
-                matches.push((idx, distance));
+                matches.push((idx, distance, entry.len()));
             }
         }
 
-        // Sort matches by distance (closest first)
-        matches.sort_by_key(|&(_, distance)| distance);
+        // Sort matches by distance (closest first) and then by length (longer entries first)
+        // This prioritizes both close matches and longer phrases which are usually more specific
+        matches.sort_by(|&(_, dist_a, len_a), &(_, dist_b, len_b)| {
+            // First compare by distance
+            match dist_a.cmp(&dist_b) {
+                std::cmp::Ordering::Equal => {
+                    // If distances are equal, prefer longer matches
+                    len_b.cmp(&len_a) // Reversed to put longer entries first
+                }
+                ordering => ordering,
+            }
+        });
+        
         matches
     }
 
@@ -251,8 +290,7 @@ impl FuzzyMemo128 {
             // Get the current dictionary
             let dictionary = dictionaries[component_idx];
 
-            // Try different segmentation points
-            // Start with more greedy segments to optimize for fewer branches
+            // Determine how to segment the sentence based on component position
             let max_segment_len = if component_idx == 4 {
                 // Last component (outcome) should match the rest of the sentence
                 sentence.len()
@@ -261,32 +299,90 @@ impl FuzzyMemo128 {
                 // This helps reduce combinatorial explosion
                 min(
                     sentence.len(),
-                    100, // Reasonable max length for a component
+                    // Use different max lengths based on dictionary expected entry size
+                    match component_idx {
+                        0 => 50, // Character (more likely to be longer)
+                        1 => 50, // Setting (can be longer phrase)
+                        2 => 30, // Action (usually shorter)
+                        3 => 40, // Object (medium length)
+                        _ => 100, // Fallback (shouldn't happen)
+                    },
                 )
             };
 
-            // We'll try segmenting at spaces first for a more efficient search
-            // This is a heuristic to reduce the search space
-            let space_positions: Vec<usize> = sentence
-                .char_indices()
-                .filter(|&(_, c)| c == ' ')
-                .map(|(i, _)| i)
-                .collect();
-
-            // Add the end of string as a potential break point
-            let mut segment_points = space_positions;
+            // Enhanced segmentation strategy:
+            // 1. Try full sentence segments for last component
+            // 2. Try breaking at spaces for natural word boundaries
+            // 3. Try word sequences of varying lengths for better phrase detection
+            let mut segment_points = Vec::new();
+            
             if component_idx == 4 {
-                segment_points = vec![sentence.len()]; // Last component takes all remaining text
-            } else if !segment_points.is_empty() {
+                // Last component - use all remaining text
                 segment_points.push(sentence.len());
-                segment_points.sort();
             } else {
-                // If no spaces found, use a more brute force approach
-                segment_points = (1..=max_segment_len).collect();
+                // Collect all space positions
+                let space_positions: Vec<usize> = sentence
+                    .char_indices()
+                    .filter(|&(_, c)| c == ' ')
+                    .map(|(i, _)| i)
+                    .collect();
+                
+                // For components other than last one, try different segmentation strategies
+                if !space_positions.is_empty() {
+                    // Try segmenting at different word boundaries
+                    // 1 word, 2 words, 3 words, etc. 
+                    for i in 0..min(5, space_positions.len()) {
+                        segment_points.push(space_positions[i]);
+                    }
+                    
+                    // Also add some longer segments to try
+                    if space_positions.len() >= 2 {
+                        for i in (2..min(10, space_positions.len())).step_by(2) {
+                            segment_points.push(space_positions[i]);
+                        }
+                    }
+                    
+                    // Also add full sentence if it's within reasonable length
+                    if sentence.len() <= max_segment_len {
+                        segment_points.push(sentence.len());
+                    }
+                    
+                    // Sort and deduplicate
+                    segment_points.sort();
+                    segment_points.dedup();
+                } else {
+                    // If no spaces found, use a more strategic approach to limit combinatorial explosion
+                    // Try reasonable points instead of every position
+                    if sentence.len() <= 10 {
+                        // For very short sequences, try every position
+                        segment_points = (1..=min(max_segment_len, sentence.len())).collect();
+                    } else {
+                        // For longer sequences, try at regular intervals to reduce combinations
+                        for len in (5..=min(max_segment_len, sentence.len())).step_by(5) {
+                            segment_points.push(len);
+                        }
+                    }
+                }
+            }
+
+            // Limit total number of segment points to prevent excessive recursion
+            if segment_points.len() > 15 {
+                let mut limited_points = Vec::with_capacity(15);
+                let step = segment_points.len() / 15;
+                for i in (0..segment_points.len()).step_by(step.max(1)) {
+                    limited_points.push(segment_points[i]);
+                }
+                // Always include the last segment point
+                if let Some(&last) = segment_points.last() {
+                    if limited_points.last() != Some(&last) {
+                        limited_points.push(last);
+                    }
+                }
+                segment_points = limited_points;
             }
 
             for &k in &segment_points {
-                if k > sentence.len() {
+                if k == 0 || k > sentence.len() {
                     continue;
                 }
 
@@ -295,7 +391,8 @@ impl FuzzyMemo128 {
                 // Get fuzzy matches for this prefix
                 let matches = fuzzy_memo.find_fuzzy_matches(prefix, dictionary, max_distance);
 
-                for (idx, _) in matches {
+                // Consider no more than 5 best matches per segment to limit recursion
+                for (idx, _, _) in matches.into_iter().take(5) {
                     // Add this index to our current path
                     current_indices.push(idx);
 
@@ -324,6 +421,12 @@ impl FuzzyMemo128 {
 
                     // Remove this index before trying the next match
                     current_indices.pop();
+                    
+                    // If we already have a significant number of results, stop adding more
+                    // This prevents excessive recursion while still finding good matches
+                    if results.len() >= 50 {
+                        return;
+                    }
                 }
             }
         }
@@ -402,6 +505,7 @@ impl FuzzyMemo128 {
     /// - Higher `max_levenshtein_distance` values will allow more flexibility but may
     ///   increase computation time and possibly return false positives
     pub fn fuzzy_decode(&self, input_sentences: &[String]) -> Result<Vec<String>, Memo128Error> {
+        // Validate we have exactly 3 sentences
         if input_sentences.len() != NUM_CHUNKS {
             return Err(Memo128Error::ParsingError(format!(
                 "Expected exactly {} sentences, got {}",
@@ -410,26 +514,77 @@ impl FuzzyMemo128 {
             )));
         }
 
+        // Normalize input sentences - trim whitespace and normalize spaces
+        let normalized_sentences: Vec<String> = input_sentences
+            .iter()
+            .map(|s| {
+                let trimmed = s.trim();
+                // Replace multiple consecutive spaces with a single space
+                let mut normalized = String::with_capacity(trimmed.len());
+                let mut last_was_space = false;
+                
+                for c in trimmed.chars() {
+                    if c.is_whitespace() {
+                        if !last_was_space {
+                            normalized.push(' ');
+                            last_was_space = true;
+                        }
+                    } else {
+                        normalized.push(c);
+                        last_was_space = false;
+                    }
+                }
+                
+                normalized
+            })
+            .collect();
+
         // Process each sentence to find all plausible component sequences
         let mut sentence_candidates: Vec<Vec<ComponentIndices>> = Vec::new();
 
-        for sentence in input_sentences {
-            let sentence = sentence.trim();
+        for (i, sentence) in normalized_sentences.iter().enumerate() {
+            if sentence.is_empty() {
+                return Err(Memo128Error::ParsingError(format!(
+                    "Sentence {} is empty after normalization", i + 1
+                )));
+            }
+            
             let candidates = self.fuzzy_parse_sentence(sentence);
 
             if candidates.is_empty() {
                 // If any sentence has no plausible parsing, we can't proceed
                 return Err(Memo128Error::ParsingError(format!(
-                    "No fuzzy matches found for sentence: {}",
-                    sentence
+                    "No fuzzy matches found for sentence {}: {}",
+                    i + 1, sentence
                 )));
             }
 
-            sentence_candidates.push(candidates);
+            // Limit the number of candidates per sentence to prevent combinatorial explosion
+            let max_candidates = 50;
+            let limited_candidates = if candidates.len() > max_candidates {
+                candidates[0..max_candidates].to_vec()
+            } else {
+                candidates
+            };
+            
+            sentence_candidates.push(limited_candidates);
         }
 
         // Store valid hex results
         let mut valid_hex_results = Vec::new();
+
+        // Calculate the total number of combinations
+        let total_combinations: usize = sentence_candidates.iter()
+            .map(|candidates| candidates.len())
+            .product();
+            
+        // If we have too many combinations, return an error to prevent excessive computation
+        if total_combinations > 1_000_000 {
+            return Err(Memo128Error::ParsingError(format!(
+                "Too many possible combinations ({}) to check efficiently. Try increasing the fuzzy matching threshold.",
+                total_combinations
+            )));
+        }
 
         // Generate all combinations and check each one
         self.check_candidates(
@@ -438,6 +593,15 @@ impl FuzzyMemo128 {
             &mut Vec::with_capacity(NUM_CHUNKS),
             &mut valid_hex_results,
         );
+
+        // Sort results to ensure stable output across runs
+        valid_hex_results.sort();
+        
+        // Limit the number of results if we have too many
+        let max_results = 100;
+        if valid_hex_results.len() > max_results {
+            valid_hex_results.truncate(max_results);
+        }
 
         Ok(valid_hex_results)
     }
