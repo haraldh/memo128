@@ -1,6 +1,6 @@
 [package]
 name = "memo128"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "A library for encoding and decoding 128-bit data as mnemonic sentences"
 authors = ["memo128 developers"]
