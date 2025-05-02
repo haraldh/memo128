@@ -363,11 +363,11 @@ impl FuzzyMemo128 {
 
         for &(idx_c, idx_s, idx_a, idx_o, idx_k) in component_combos {
             // Reconstruct chunk value
-            let chunk_value = BigUint::from(idx_c)
-                << (SETTING_BITS + ACTION_BITS + OBJECT_BITS + OUTCOME_BITS)
-                | BigUint::from(idx_s) << (ACTION_BITS + OBJECT_BITS + OUTCOME_BITS)
-                | BigUint::from(idx_a) << (OBJECT_BITS + OUTCOME_BITS)
-                | BigUint::from(idx_o) << OUTCOME_BITS
+            let chunk_value = (BigUint::from(idx_c)
+                << (SETTING_BITS + ACTION_BITS + OBJECT_BITS + OUTCOME_BITS))
+                | (BigUint::from(idx_s) << (ACTION_BITS + OBJECT_BITS + OUTCOME_BITS))
+                | (BigUint::from(idx_a) << (OBJECT_BITS + OUTCOME_BITS))
+                | (BigUint::from(idx_o) << OUTCOME_BITS)
                 | BigUint::from(idx_k);
 
             // Append to the reconstructed number
