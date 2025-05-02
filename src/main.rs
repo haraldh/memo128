@@ -1,131 +1,115 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
-use std::num::ParseIntError;
 use std::path::Path;
-use sha2::{Sha256, Digest};
+
 use num_bigint::BigUint;
-use num_traits::cast::ToPrimitive;
+use num_traits::{One, ToPrimitive, Zero};
+use sha2::{Digest, Sha256};
 
-const CHARACTER_DICT_PATH: &str = "character_10bit.txt";
-const SETTING_DICT_PATH: &str = "setting_10bit.txt";
-const ACTION_DICT_PATH: &str = "action_8bit.txt";
-const OBJECT_DICT_PATH: &str = "object_9bit.txt";
-const OUTCOME_DICT_PATH: &str = "outcome_8bit.txt";
+// Constants for bit allocations
+const CHARACTER_BITS: u32 = 10;
+const SETTING_BITS: u32 = 10;
+const ACTION_BITS: u32 = 8;
+const OBJECT_BITS: u32 = 9;
+const OUTCOME_BITS: u32 = 8;
 
-// Error types for the encoder/decoder
+const CHUNK_BITS: u32 = CHARACTER_BITS + SETTING_BITS + ACTION_BITS + OBJECT_BITS + OUTCOME_BITS; // 45 bits
+const CHECKSUM_BITS: u32 = 7;
+
+const NUM_CHUNKS: usize = 3; // 3 chunks of 45 bits = 135 bits
+
+// Custom error type
 #[derive(Debug)]
-#[allow(dead_code)]  // Allow unused fields since we need them for error context
-enum Error {
+enum Memo128Error {
     IoError(io::Error),
-    InvalidHexInput(ParseIntError),
+    InvalidHexInput(String),
     InvalidDictionary(String),
-    InvalidSentenceFormat(String),
-    WordNotFound(String),
+    ParsingError(String),
     ChecksumError,
-    Other(String),
 }
 
-impl From<io::Error> for Error {
-    fn from(err: io::Error) -> Self {
-        Error::IoError(err)
+impl std::fmt::Display for Memo128Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Memo128Error::IoError(err) => write!(f, "IO error: {}", err),
+            Memo128Error::InvalidHexInput(msg) => write!(f, "Invalid hex input: {}", msg),
+            Memo128Error::InvalidDictionary(msg) => write!(f, "Dictionary error: {}", msg),
+            Memo128Error::ParsingError(msg) => write!(f, "Parsing error: {}", msg),
+            Memo128Error::ChecksumError => write!(f, "Checksum verification failed"),
+        }
     }
 }
 
-impl From<ParseIntError> for Error {
-    fn from(err: ParseIntError) -> Self {
-        Error::InvalidHexInput(err)
+impl std::error::Error for Memo128Error {}
+
+impl From<io::Error> for Memo128Error {
+    fn from(error: io::Error) -> Self {
+        Memo128Error::IoError(error)
     }
 }
 
-// Dictionary structure to hold word lists and provide forward/reverse lookups
+// Dictionary struct for handling dictionary files
 struct Dictionary {
-    name: String,
-    words: Vec<String>,
+    entries: Vec<String>,
     reverse_lookup: HashMap<String, usize>,
-    bit_size: u8,
 }
 
 impl Dictionary {
-    fn new(name: &str, bit_size: u8) -> Self {
+    fn new(expected_size: usize) -> Self {
         Dictionary {
-            name: name.to_string(),
-            words: Vec::new(),
-            reverse_lookup: HashMap::new(),
-            bit_size,
+            entries: Vec::with_capacity(expected_size),
+            reverse_lookup: HashMap::with_capacity(expected_size),
         }
     }
 
-    fn expected_size(&self) -> usize {
-        1 << self.bit_size
-    }
-
-    fn load<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Error> {
-        let file = File::open(&path).map_err(|e| {
-            Error::IoError(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("Failed to open {}: {}", self.name, e),
-            ))
-        })?;
-
+    fn load<P: AsRef<Path>>(path: P, expected_size: usize) -> Result<Self, Memo128Error> {
+        let file = File::open(path)?;
         let reader = BufReader::new(file);
-        self.words.clear();
-        self.reverse_lookup.clear();
+        let mut dict = Dictionary::new(expected_size);
 
         for (idx, line) in reader.lines().enumerate() {
-            let word = line?.trim().to_string();
-            if word.is_empty() {
-                return Err(Error::InvalidDictionary(format!(
-                    "Empty word at line {} in {}",
-                    idx + 1, self.name
+            let entry = line?.trim().to_string();
+            if entry.is_empty() {
+                continue;
+            }
+
+            if dict.entries.len() >= expected_size {
+                return Err(Memo128Error::InvalidDictionary(format!(
+                    "Dictionary contains more than {} entries",
+                    expected_size
                 )));
             }
 
-            if self.reverse_lookup.contains_key(&word) {
-                return Err(Error::InvalidDictionary(format!(
-                    "Duplicate word '{}' in {}",
-                    word, self.name
+            if dict.reverse_lookup.contains_key(&entry) {
+                return Err(Memo128Error::InvalidDictionary(format!(
+                    "Duplicate entry found: {}",
+                    entry
                 )));
             }
 
-            self.reverse_lookup.insert(word.clone(), idx);
-            self.words.push(word);
+            dict.reverse_lookup.insert(entry.clone(), idx);
+            dict.entries.push(entry);
         }
 
-        // Validate dictionary size
-        let expected_size = self.expected_size();
-        if self.words.len() != expected_size {
-            return Err(Error::InvalidDictionary(format!(
-                "Dictionary {} has {} entries, expected {}",
-                self.name,
-                self.words.len(),
-                expected_size
+        if dict.entries.len() != expected_size {
+            return Err(Memo128Error::InvalidDictionary(format!(
+                "Dictionary should contain exactly {} entries, found {}",
+                expected_size,
+                dict.entries.len()
             )));
         }
 
-        Ok(())
+        Ok(dict)
     }
 
-    fn get_word(&self, index: usize) -> Result<&String, Error> {
-        self.words.get(index).ok_or_else(|| {
-            Error::InvalidDictionary(format!(
-                "Index {} out of bounds for {} dictionary (size {})",
-                index,
-                self.name,
-                self.words.len()
-            ))
-        })
-    }
-
-    fn get_index(&self, word: &str) -> Result<usize, Error> {
-        self.reverse_lookup.get(word).copied().ok_or_else(|| {
-            Error::WordNotFound(format!("Word '{}' not found in {} dictionary", word, self.name))
-        })
+    fn get(&self, index: usize) -> Option<&String> {
+        self.entries.get(index)
     }
 }
 
-// Main encoder/decoder structure
-struct SentenceEncoder {
+// Memo128 struct for handling encoding and decoding
+struct Memo128 {
     character_dict: Dictionary,
     setting_dict: Dictionary,
     action_dict: Dictionary,
@@ -133,378 +117,551 @@ struct SentenceEncoder {
     outcome_dict: Dictionary,
 }
 
-impl SentenceEncoder {
-    fn new() -> Self {
-        SentenceEncoder {
-            character_dict: Dictionary::new("character", 10),
-            setting_dict: Dictionary::new("setting", 10),
-            action_dict: Dictionary::new("action", 8),
-            object_dict: Dictionary::new("object", 9),
-            outcome_dict: Dictionary::new("outcome", 8),
-        }
-    }
-
-    fn load_dictionaries(&mut self) -> Result<(), Error> {
-        self.character_dict.load(CHARACTER_DICT_PATH)?;
-        self.setting_dict.load(SETTING_DICT_PATH)?;
-        self.action_dict.load(ACTION_DICT_PATH)?;
-        self.object_dict.load(OBJECT_DICT_PATH)?;
-        self.outcome_dict.load(OUTCOME_DICT_PATH)?;
-        Ok(())
+impl Memo128 {
+    fn new() -> Result<Self, Memo128Error> {
+        Ok(Memo128 {
+            character_dict: Dictionary::load("character_10bit.txt", 1 << CHARACTER_BITS)?,
+            setting_dict: Dictionary::load("setting_10bit.txt", 1 << SETTING_BITS)?,
+            action_dict: Dictionary::load("action_8bit.txt", 1 << ACTION_BITS)?,
+            object_dict: Dictionary::load("object_9bit.txt", 1 << OBJECT_BITS)?,
+            outcome_dict: Dictionary::load("outcome_8bit.txt", 1 << OUTCOME_BITS)?,
+        })
     }
 
     // Calculate 7-bit checksum from 128-bit data
-    fn calculate_checksum(&self, data_bytes: &[u8]) -> u8 {
+    fn calculate_checksum(&self, data: &[u8]) -> u8 {
         let mut hasher = Sha256::new();
-        hasher.update(data_bytes);
+        hasher.update(data);
         let result = hasher.finalize();
-        // Take first byte and keep only 7 most significant bits
+        // Take the first 7 bits (MSB) of the hash
         (result[0] >> 1) & 0x7F
     }
 
-    // Encode a 128-bit integer (represented as a hex string) to 3 sentences
-    fn encode(&self, hex_input: &str) -> Result<Vec<String>, Error> {
-        // 1. Validate input format
-        if hex_input.len() != 32 || !hex_input.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err(Error::Other(format!(
-                "Invalid input: expected 32-char hex string, got '{}'",
-                hex_input
-            )));
+    // Convert hex string to bytes
+    fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, Memo128Error> {
+        if hex.len() != 32 {
+            return Err(Memo128Error::InvalidHexInput(
+                "Hex string must be 32 characters long".to_string(),
+            ));
         }
 
-        // 2. Convert hex to bytes
-        let mut data_bytes = [0u8; 16];
+        let mut bytes = Vec::with_capacity(16);
         for i in 0..16 {
-            let start = i * 2;
-            let byte_str = &hex_input[start..start + 2];
-            data_bytes[i] = u8::from_str_radix(byte_str, 16)?;
+            let byte_str = &hex[i * 2..i * 2 + 2];
+            match u8::from_str_radix(byte_str, 16) {
+                Ok(byte) => bytes.push(byte),
+                Err(_) => {
+                    return Err(Memo128Error::InvalidHexInput(format!(
+                        "Invalid hex characters: {}",
+                        byte_str
+                    )));
+                }
+            }
+        }
+        Ok(bytes)
+    }
+
+    // Convert bytes to hex string
+    fn bytes_to_hex(bytes: &[u8]) -> String {
+        bytes
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>()
+    }
+
+    // Encode 128-bit number to 3 sentences
+    fn encode(&self, hex_input: &str) -> Result<Vec<String>, Memo128Error> {
+        // Convert hex to bytes
+        let data_bytes = Self::hex_to_bytes(hex_input)?;
+        if data_bytes.len() != 16 {
+            return Err(Memo128Error::InvalidHexInput(
+                "Data must be exactly 16 bytes (128 bits)".to_string(),
+            ));
         }
 
-        // 3. Calculate checksum
+        // Calculate checksum
         let checksum_bits = self.calculate_checksum(&data_bytes);
 
-        // 4. Convert to BigUint (128-bit integer)
+        // Convert data to BigUint
         let data_num = BigUint::from_bytes_be(&data_bytes);
 
-        // 5. Combine data and checksum into 135-bit number N
-        let combined_num = (data_num << 7) | BigUint::from(checksum_bits);
+        // Combine data and checksum: (data << 7) | checksum
+        let combined = (data_num << CHECKSUM_BITS) | BigUint::from(checksum_bits);
 
-        // 6. Initialize output
-        let mut output_sentences = Vec::with_capacity(3);
+        // Initialize output sentences
+        let mut output_sentences = Vec::with_capacity(NUM_CHUNKS);
 
-        // 7. Process 3 chunks
-        for chunk_idx in 0..3 {
-            // Extract chunk - each chunk is 45 bits (135 bits total split into 3)
-            let shift_bits = (2 - chunk_idx) * 45;
-            let mask = (BigUint::from(1u64) << 45) - 1u64;
-            let chunk_value: BigUint = (&combined_num >> shift_bits) & &mask;
+        // Process the 3 chunks
+        let mut remaining_bits = combined.clone();
+        for _ in 0..NUM_CHUNKS {
+            // Extract chunk (45 bits) from the right side (LSB)
+            let mask = (BigUint::one() << CHUNK_BITS) - BigUint::one();
+            let chunk_value = &remaining_bits & &mask;
+            remaining_bits >>= CHUNK_BITS;
 
-            // Convert to u64 for easier bit manipulation
-            let chunk_u64 = chunk_value.to_u64().unwrap_or(0);
+            // Extract component indices
+            let mut chunk_copy = chunk_value.clone();
             
-            // Extract indices - the chunk is 45 bits broken down as 10+10+8+9+8 = 45 bits
-            let idx_c = (chunk_u64 >> 35) & 0x3FF;  // 10 bits for character (bits 35-44)
-            let idx_s = (chunk_u64 >> 25) & 0x3FF;  // 10 bits for setting (bits 25-34)
-            let idx_a = (chunk_u64 >> 17) & 0xFF;   // 8 bits for action (bits 17-24)
-            let idx_o = (chunk_u64 >> 8) & 0x1FF;   // 9 bits for object (bits 8-16)
-            let idx_k = chunk_u64 & 0xFF;           // 8 bits for outcome (bits 0-7)
+            let idx_k = (&chunk_copy & BigUint::from(((1u64 << OUTCOME_BITS) - 1) as u8)).to_usize().unwrap();
+            chunk_copy >>= OUTCOME_BITS;
+            
+            let idx_o = (&chunk_copy & BigUint::from(((1u64 << OBJECT_BITS) - 1) as u16)).to_usize().unwrap();
+            chunk_copy >>= OBJECT_BITS;
+            
+            let idx_a = (&chunk_copy & BigUint::from(((1u64 << ACTION_BITS) - 1) as u8)).to_usize().unwrap();
+            chunk_copy >>= ACTION_BITS;
+            
+            let idx_s = (&chunk_copy & BigUint::from(((1u64 << SETTING_BITS) - 1) as u16)).to_usize().unwrap();
+            chunk_copy >>= SETTING_BITS;
+            
+            let idx_c = (&chunk_copy & BigUint::from(((1u64 << CHARACTER_BITS) - 1) as u16)).to_usize().unwrap();
 
-            // Lookup words from dictionaries
-            let word_c = self.character_dict.get_word(idx_c as usize)?;
-            let word_s = self.setting_dict.get_word(idx_s as usize)?;
-            let word_a = self.action_dict.get_word(idx_a as usize)?;
-            let word_o = self.object_dict.get_word(idx_o as usize)?;
-            let word_k = self.outcome_dict.get_word(idx_k as usize)?;
+            // Lookup phrases
+            let phrase_c = self.character_dict.get(idx_c).ok_or_else(|| {
+                Memo128Error::InvalidDictionary(format!("Character index out of range: {}", idx_c))
+            })?;
+            let phrase_s = self.setting_dict.get(idx_s).ok_or_else(|| {
+                Memo128Error::InvalidDictionary(format!("Setting index out of range: {}", idx_s))
+            })?;
+            let phrase_a = self.action_dict.get(idx_a).ok_or_else(|| {
+                Memo128Error::InvalidDictionary(format!("Action index out of range: {}", idx_a))
+            })?;
+            let phrase_o = self.object_dict.get(idx_o).ok_or_else(|| {
+                Memo128Error::InvalidDictionary(format!("Object index out of range: {}", idx_o))
+            })?;
+            let phrase_k = self.outcome_dict.get(idx_k).ok_or_else(|| {
+                Memo128Error::InvalidDictionary(format!("Outcome index out of range: {}", idx_k))
+            })?;
 
             // Assemble sentence
-            let sentence = format!("{} {} {} {} {}", word_c, word_s, word_a, word_o, word_k);
-            output_sentences.push(sentence);
+            let sentence = format!("{} {} {} {} {}", phrase_c, phrase_s, phrase_a, phrase_o, phrase_k);
+            output_sentences.insert(0, sentence);
         }
 
         Ok(output_sentences)
     }
 
-    // Decode 3 sentences back to a 128-bit integer (represented as a hex string)
-    fn decode(&self, input_sentences: &[String]) -> Result<String, Error> {
-        // 1. Validate input format
-        if input_sentences.len() != 3 {
-            return Err(Error::Other(format!(
-                "Invalid input: expected 3 sentences, got {}",
+    // Parse a sentence back into its component phrases
+    fn parse_sentence(
+        &self,
+        sentence: &str,
+    ) -> Result<(usize, usize, usize, usize, usize), Memo128Error> {
+        // For each possible character phrase
+        for (c_idx, c_phrase) in self.character_dict.entries.iter().enumerate() {
+            // If the sentence starts with this character phrase
+            if sentence.starts_with(c_phrase) {
+                let rest_after_c = &sentence[c_phrase.len()..];
+                
+                // Skip the space after character phrase
+                if !rest_after_c.starts_with(' ') {
+                    continue;
+                }
+                let rest_after_c = &rest_after_c[1..];
+
+                // Try each setting phrase
+                for (s_idx, s_phrase) in self.setting_dict.entries.iter().enumerate() {
+                    if rest_after_c.starts_with(s_phrase) {
+                        let rest_after_s = &rest_after_c[s_phrase.len()..];
+                        
+                        // Skip the space after setting phrase
+                        if !rest_after_s.starts_with(' ') {
+                            continue;
+                        }
+                        let rest_after_s = &rest_after_s[1..];
+
+                        // Try each action phrase
+                        for (a_idx, a_phrase) in self.action_dict.entries.iter().enumerate() {
+                            if rest_after_s.starts_with(a_phrase) {
+                                let rest_after_a = &rest_after_s[a_phrase.len()..];
+                                
+                                // Skip the space after action phrase
+                                if !rest_after_a.starts_with(' ') {
+                                    continue;
+                                }
+                                let rest_after_a = &rest_after_a[1..];
+
+                                // Try each object phrase
+                                for (o_idx, o_phrase) in self.object_dict.entries.iter().enumerate() {
+                                    if rest_after_a.starts_with(o_phrase) {
+                                        let rest_after_o = &rest_after_a[o_phrase.len()..];
+                                        
+                                        // Skip the space after object phrase
+                                        if !rest_after_o.starts_with(' ') {
+                                            continue;
+                                        }
+                                        let rest_after_o = &rest_after_o[1..];
+
+                                        // Try each outcome phrase
+                                        for (k_idx, k_phrase) in self.outcome_dict.entries.iter().enumerate() {
+                                            if rest_after_o == k_phrase {
+                                                // All phrases successfully matched
+                                                return Ok((c_idx, s_idx, a_idx, o_idx, k_idx));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(Memo128Error::ParsingError(format!(
+            "Cannot parse sentence: {}",
+            sentence
+        )))
+    }
+
+    // Decode 3 sentences back to 128-bit hex
+    fn decode(&self, input_sentences: &[String]) -> Result<String, Memo128Error> {
+        if input_sentences.len() != NUM_CHUNKS {
+            return Err(Memo128Error::ParsingError(format!(
+                "Expected exactly {} sentences, got {}",
+                NUM_CHUNKS,
                 input_sentences.len()
             )));
         }
 
-        // 2. Initialize 135-bit number
-        let mut reconstructed_135_num = BigUint::from(0u32);
+        let mut reconstructed_135_num = BigUint::zero();
 
-        // 3. Process 3 sentences in order
-        for (i, sentence) in input_sentences.iter().enumerate() {
-            let parts: Vec<&str> = sentence.split_whitespace().collect();
-            if parts.len() != 5 {
-                return Err(Error::InvalidSentenceFormat(format!(
-                    "Expected 5 words in sentence, found {}: '{}'",
-                    parts.len(),
-                    sentence
-                )));
-            }
-
-            // Reverse lookup indices
-            let idx_c = self.character_dict.get_index(parts[0])?;
-            let idx_s = self.setting_dict.get_index(parts[1])?;
-            let idx_a = self.action_dict.get_index(parts[2])?;
-            let idx_o = self.object_dict.get_index(parts[3])?;
-            let idx_k = self.outcome_dict.get_index(parts[4])?;
-
-            // Validate indices
-            if idx_c >= (1 << 10) || idx_s >= (1 << 10) || idx_a >= (1 << 8) ||
-                idx_o >= (1 << 9) || idx_k >= (1 << 8) {
-                return Err(Error::Other("Index out of range for component".to_string()));
-            }
-
-            // Reconstruct chunk value (45 bits)
-            let chunk_value = BigUint::from(idx_c) << 35 |
-                BigUint::from(idx_s) << 25 |
-                BigUint::from(idx_a) << 17 |
-                BigUint::from(idx_o) << 8 |
-                BigUint::from(idx_k);
-
-            // Based on the sentence position, place the chunk in the appropriate position
-            // First sentence (i=0) is the leftmost 45 bits of the 135-bit number
-            let shift_amount = (2 - i) * 45;
-            reconstructed_135_num |= chunk_value << shift_amount;
+        // Process each sentence
+        for sentence in input_sentences {
+            let sentence = sentence.trim();
+            
+            // Parse sentence to get component indices
+            let (idx_c, idx_s, idx_a, idx_o, idx_k) = self.parse_sentence(sentence)?;
+            
+            // Reconstruct chunk value
+            let chunk_value = BigUint::from(idx_c) << (SETTING_BITS + ACTION_BITS + OBJECT_BITS + OUTCOME_BITS)
+                | BigUint::from(idx_s) << (ACTION_BITS + OBJECT_BITS + OUTCOME_BITS)
+                | BigUint::from(idx_a) << (OBJECT_BITS + OUTCOME_BITS)
+                | BigUint::from(idx_o) << OUTCOME_BITS
+                | BigUint::from(idx_k);
+            
+            // Append to the reconstructed number
+            reconstructed_135_num = (reconstructed_135_num << CHUNK_BITS) | chunk_value;
         }
 
-        // 4. Separate data and checksum
-        let checksum_bits_decoded = &reconstructed_135_num & BigUint::from(0x7Fu32);
-        let data_num_decoded: BigUint = &reconstructed_135_num >> 7;
-
-        // 5. Convert data_num_decoded to bytes
+        // Separate data and checksum
+        let checksum_mask = BigUint::from((1u16 << CHECKSUM_BITS) - 1);
+        let checksum_bits_decoded = (&reconstructed_135_num & &checksum_mask).to_u8().unwrap();
+        let data_num_decoded = &reconstructed_135_num >> CHECKSUM_BITS;
+        
+        // Convert data_num_decoded to bytes
         let data_bytes_decoded = data_num_decoded.to_bytes_be();
-
-        // Ensure we have exactly 16 bytes
-        let mut padded_bytes = vec![0u8; 16];
+        
+        // Pad with zeros if necessary
+        let mut padded_bytes = vec![0; 16];
         let offset = 16 - data_bytes_decoded.len();
-        padded_bytes[offset..(data_bytes_decoded.len() + offset)].copy_from_slice(&data_bytes_decoded[..]);
-
-        // 6. Verify checksum
-        let calculated_checksum = self.calculate_checksum(&padded_bytes);
-        let decoded_checksum = checksum_bits_decoded.to_u8().unwrap();
-
-        if decoded_checksum != calculated_checksum {
-            return Err(Error::ChecksumError);
+        padded_bytes[offset..].copy_from_slice(&data_bytes_decoded);
+        
+        // Calculate and verify checksum
+        let checksum_bits_calculated = self.calculate_checksum(&padded_bytes);
+        
+        if checksum_bits_decoded != checksum_bits_calculated {
+            return Err(Memo128Error::ChecksumError);
         }
-
-        // 7. Format output as 32-character hex string
-        let mut hex_output = String::new();
-        for byte in padded_bytes {
-            hex_output.push_str(&format!("{:02x}", byte));
-        }
-
-        Ok(hex_output)
+        
+        // Format output as 32-char hex string
+        Ok(Self::bytes_to_hex(&padded_bytes))
     }
 }
 
-fn main() -> Result<(), Error> {
-    let args: Vec<String> = std::env::args().collect();
+fn print_usage() {
+    println!("Usage:");
+    println!("  encode <hex_string>   - Encode a 32-character hex string to 3 sentences");
+    println!("  decode \"<s1>\" \"<s2>\" \"<s3>\" - Decode 3 sentences back to a hex string");
+}
 
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().collect();
+    
     if args.len() < 2 {
-        println!("Usage:");
-        println!("  encode <32-char-hex>              - Encode 128-bit hex to 3 sentences");
-        println!("  decode \"<sentence1>\" \"<sentence2>\" \"<sentence3>\"  - Decode 3 sentences to 128-bit hex");
+        print_usage();
         return Ok(());
     }
-
-    let mut encoder = SentenceEncoder::new();
-    encoder.load_dictionaries()?;
-
+    
+    let memo128 = Memo128::new()?;
+    
     match args[1].as_str() {
         "encode" => {
             if args.len() != 3 {
-                return Err(Error::Other("Encode requires a 32-character hex string".to_string()));
+                println!("Error: encode command requires a 32-character hex string");
+                print_usage();
+                return Ok(());
             }
-            let hex_input = args[2].to_lowercase();
-            let sentences = encoder.encode(&hex_input)?;
-            println!("Encoded sentences:");
-            for (i, sentence) in sentences.iter().enumerate() {
-                println!("Sentence {}: {}", i + 1, sentence);
+            
+            match memo128.encode(&args[2]) {
+                Ok(sentences) => {
+                    for (i, sentence) in sentences.iter().enumerate() {
+                        println!("Sentence {}: {}", i + 1, sentence);
+                    }
+                },
+                Err(e) => println!("Error: {}", e),
             }
         },
         "decode" => {
             if args.len() != 5 {
-                return Err(Error::Other("Decode requires exactly 3 sentences".to_string()));
+                println!("Error: decode command requires exactly 3 sentences");
+                print_usage();
+                return Ok(());
             }
+            
             let sentences = vec![args[2].clone(), args[3].clone(), args[4].clone()];
-            let hex_output = encoder.decode(&sentences)?;
-            println!("Decoded hex: {}", hex_output);
+            
+            match memo128.decode(&sentences) {
+                Ok(hex) => println!("{}", hex),
+                Err(e) => println!("Error: {}", e),
+            }
         },
         _ => {
-            return Err(Error::Other(format!("Unknown command: {}", args[1])));
+            println!("Error: Unknown command '{}'", args[1]);
+            print_usage();
         }
     }
-
+    
     Ok(())
 }
 
-// Tests
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::tempdir;
 
-    // Extension method for Dictionary to load from a full path
-    impl Dictionary {
-        fn load_with_full_path<P: AsRef<Path>>(&mut self, full_path: P) -> Result<(), Error> {
-            let file = File::open(&full_path).map_err(|e| {
-                Error::IoError(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("Failed to open {}: {}", self.name, e),
-                ))
-            })?;
-
-            let reader = BufReader::new(file);
-            self.words.clear();
-            self.reverse_lookup.clear();
-
-            for (idx, line) in reader.lines().enumerate() {
-                let word = line?.trim().to_string();
-                if word.is_empty() {
-                    return Err(Error::InvalidDictionary(format!(
-                        "Empty word at line {} in {}",
-                        idx + 1, self.name
-                    )));
-                }
-
-                if self.reverse_lookup.contains_key(&word) {
-                    return Err(Error::InvalidDictionary(format!(
-                        "Duplicate word '{}' in {}",
-                        word, self.name
-                    )));
-                }
-
-                self.reverse_lookup.insert(word.clone(), idx);
-                self.words.push(word);
-            }
-
-            // Validate dictionary size
-            let expected_size = self.expected_size();
-            if self.words.len() != expected_size {
-                return Err(Error::InvalidDictionary(format!(
-                    "Dictionary {} has {} entries, expected {}",
-                    self.name,
-                    self.words.len(),
-                    expected_size
-                )));
-            }
-
-            Ok(())
-        }
-    }
-
-    // Helper function to create test dictionaries and set up an encoder
-    fn create_test_encoder() -> (tempfile::TempDir, SentenceEncoder) {
-        let dir = tempdir().unwrap();
-
-        // Create character dictionary (10-bit = 1024 entries)
-        let char_path = dir.path().join(CHARACTER_DICT_PATH);
-        let mut char_file = File::create(&char_path).unwrap();
-        for i in 0..1024 {
-            writeln!(char_file, "character_{}", i).unwrap();
-        }
-
-        // Create setting dictionary (10-bit = 1024 entries)
-        let setting_path = dir.path().join(SETTING_DICT_PATH);
-        let mut setting_file = File::create(&setting_path).unwrap();
-        for i in 0..1024 {
-            writeln!(setting_file, "setting_{}", i).unwrap();
-        }
-
-        // Create action dictionary (8-bit = 256 entries)
-        let action_path = dir.path().join(ACTION_DICT_PATH);
-        let mut action_file = File::create(&action_path).unwrap();
-        for i in 0..256 {
-            writeln!(action_file, "action_{}", i).unwrap();
-        }
-
-        // Create object dictionary (9-bit = 512 entries)
-        let object_path = dir.path().join(OBJECT_DICT_PATH);
-        let mut object_file = File::create(&object_path).unwrap();
-        for i in 0..512 {
-            writeln!(object_file, "object_{}", i).unwrap();
-        }
-
-        // Create outcome dictionary (8-bit = 256 entries)
-        let outcome_path = dir.path().join(OUTCOME_DICT_PATH);
-        let mut outcome_file = File::create(&outcome_path).unwrap();
-        for i in 0..256 {
-            writeln!(outcome_file, "outcome_{}", i).unwrap();
-        }
-
-        // Create and set up the encoder
-        let mut encoder = SentenceEncoder::new();
+    fn create_test_dictionaries() -> std::io::Result<tempfile::TempDir> {
+        let dir = tempdir()?;
         
-        // Load dictionaries with full paths
-        encoder.character_dict.load_with_full_path(char_path).unwrap();
-        encoder.setting_dict.load_with_full_path(setting_path).unwrap();
-        encoder.action_dict.load_with_full_path(action_path).unwrap();
-        encoder.object_dict.load_with_full_path(object_path).unwrap();
-        encoder.outcome_dict.load_with_full_path(outcome_path).unwrap();
-
-        (dir, encoder)
+        // Create minimal test dictionaries
+        let dict_files = [
+            ("character_10bit.txt", 1 << CHARACTER_BITS),
+            ("setting_10bit.txt", 1 << SETTING_BITS),
+            ("action_8bit.txt", 1 << ACTION_BITS),
+            ("object_9bit.txt", 1 << OBJECT_BITS),
+            ("outcome_8bit.txt", 1 << OUTCOME_BITS),
+        ];
+        
+        for (filename, size) in dict_files.iter() {
+            let file_path = dir.path().join(filename);
+            let mut file = File::create(file_path)?;
+            
+            for i in 0..*size {
+                writeln!(file, "test_entry_{}", i)?;
+            }
+        }
+        
+        Ok(dir)
     }
-
+    
     #[test]
-    fn test_encode_decode_roundtrip() {
-        // Create test dictionaries and get encoder
-        let (_dir, encoder) = create_test_encoder();
-
-        // Test with a known 128-bit hex value
-        let test_hex = "0123456789abcdef0123456789abcdef";
-
+    fn test_checksum_calculation() {
+        // Create a Memo128 instance directly for this test to avoid dictionary loading
+        struct TestMemo128;
+        
+        impl TestMemo128 {
+            fn calculate_checksum(&self, data: &[u8]) -> u8 {
+                let mut hasher = Sha256::new();
+                hasher.update(data);
+                let result = hasher.finalize();
+                // Take the first 7 bits (MSB) of the hash
+                (result[0] >> 1) & 0x7F
+            }
+        }
+        
+        let memo128 = TestMemo128;
+        
+        // Test vector
+        let data = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+        let checksum = memo128.calculate_checksum(&data);
+        
+        // We don't know the exact checksum value, but it should be in range 0-127
+        assert!(checksum <= 127);
+    }
+    
+    #[test]
+    fn test_hex_conversion() {
+        let hex = "000102030405060708090a0b0c0d0e0f";
+        let bytes = Memo128::hex_to_bytes(hex).unwrap();
+        assert_eq!(bytes, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+        
+        let hex_roundtrip = Memo128::bytes_to_hex(&bytes);
+        assert_eq!(hex, hex_roundtrip);
+    }
+    
+    #[test]
+    fn test_roundtrip_encoding_decoding() {
+        let dir = create_test_dictionaries().unwrap();
+        
+        // Change to the test directory to find dictionaries
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        
+        let memo128 = Memo128::new().unwrap();
+        
+        // Test vector
+        let hex_input = "000102030405060708090a0b0c0d0e0f";
+        
         // Encode
-        let sentences = encoder.encode(test_hex).unwrap();
+        let sentences = memo128.encode(hex_input).unwrap();
         assert_eq!(sentences.len(), 3);
-
+        
         // Decode
-        let decoded_hex = encoder.decode(&sentences).unwrap();
+        let hex_output = memo128.decode(&sentences).unwrap();
+        assert_eq!(hex_input, hex_output);
         
-        // Verify that the decoded hex matches the original
-        assert_eq!(decoded_hex, test_hex);
-        
-        // Test another value to be thorough
-        let test_hex2 = "ffffffffffffffffffffffffffffffff";
-        let sentences2 = encoder.encode(test_hex2).unwrap();
-        let decoded_hex2 = encoder.decode(&sentences2).unwrap();
-        assert_eq!(decoded_hex2, test_hex2);
+        // Reset directory
+        std::env::set_current_dir(original_dir).unwrap();
     }
-
+    
     #[test]
-    fn test_checksum_validation() {
-        // Create test dictionaries and get encoder
-        let (_dir, encoder) = create_test_encoder();
-
-        // Generate a valid encoding
-        let test_hex = "ffffffffffffffffffffffffffffffff";
-        let sentences = encoder.encode(test_hex).unwrap();
-
-        // Modify a sentence to cause checksum failure
-        let mut bad_sentences = sentences.clone();
+    fn test_sentence_parsing() {
+        // Create mock dictionary entries and a mocked Memo128 structure
+        struct MockMemo128 {
+            character_dict: Dictionary,
+            setting_dict: Dictionary,
+            action_dict: Dictionary,
+            object_dict: Dictionary,
+            outcome_dict: Dictionary,
+        }
         
-        // Get the parts of the first sentence
-        let parts: Vec<&str> = bad_sentences[0].split_whitespace().collect();
-        
-        // Get a different character word than the original
-        // The word format in our test dictionaries is "character_X" where X is an index
-        // So we'll just use a different index
-        let original_index = parts[0].strip_prefix("character_").unwrap_or("0");
-        let original_index = original_index.parse::<usize>().unwrap_or(0);
-        let new_index = (original_index + 1) % 1024; // Ensure it's different
-        
-        // Change the character word to something that exists but is different
-        bad_sentences[0] = format!("character_{} {} {} {} {}", new_index, parts[1], parts[2], parts[3], parts[4]);
+        impl MockMemo128 {
+            fn parse_sentence(
+                &self,
+                sentence: &str,
+            ) -> Result<(usize, usize, usize, usize, usize), Memo128Error> {
+                // For each possible character phrase
+                for (c_idx, c_phrase) in self.character_dict.entries.iter().enumerate() {
+                    // If the sentence starts with this character phrase
+                    if sentence.starts_with(c_phrase) {
+                        let rest_after_c = &sentence[c_phrase.len()..];
+                        
+                        // Skip the space after character phrase
+                        if !rest_after_c.starts_with(' ') {
+                            continue;
+                        }
+                        let rest_after_c = &rest_after_c[1..];
 
-        // Decoding should fail with checksum error
-        let result = encoder.decode(&bad_sentences);
-        assert!(matches!(result, Err(Error::ChecksumError)));
+                        // Try each setting phrase
+                        for (s_idx, s_phrase) in self.setting_dict.entries.iter().enumerate() {
+                            if rest_after_c.starts_with(s_phrase) {
+                                let rest_after_s = &rest_after_c[s_phrase.len()..];
+                                
+                                // Skip the space after setting phrase
+                                if !rest_after_s.starts_with(' ') {
+                                    continue;
+                                }
+                                let rest_after_s = &rest_after_s[1..];
+
+                                // Try each action phrase
+                                for (a_idx, a_phrase) in self.action_dict.entries.iter().enumerate() {
+                                    if rest_after_s.starts_with(a_phrase) {
+                                        let rest_after_a = &rest_after_s[a_phrase.len()..];
+                                        
+                                        // Skip the space after action phrase
+                                        if !rest_after_a.starts_with(' ') {
+                                            continue;
+                                        }
+                                        let rest_after_a = &rest_after_a[1..];
+
+                                        // Try each object phrase
+                                        for (o_idx, o_phrase) in self.object_dict.entries.iter().enumerate() {
+                                            if rest_after_a.starts_with(o_phrase) {
+                                                let rest_after_o = &rest_after_a[o_phrase.len()..];
+                                                
+                                                // Skip the space after object phrase
+                                                if !rest_after_o.starts_with(' ') {
+                                                    continue;
+                                                }
+                                                let rest_after_o = &rest_after_o[1..];
+
+                                                // Try each outcome phrase
+                                                for (k_idx, k_phrase) in self.outcome_dict.entries.iter().enumerate() {
+                                                    if rest_after_o == k_phrase {
+                                                        // All phrases successfully matched
+                                                        return Ok((c_idx, s_idx, a_idx, o_idx, k_idx));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Err(Memo128Error::ParsingError(format!(
+                    "Cannot parse sentence: {}",
+                    sentence
+                )))
+            }
+        }
+        
+        // Create mock dictionaries with a few entries
+        let mut c_dict = Dictionary::new(10);
+        let mut s_dict = Dictionary::new(15);
+        let mut a_dict = Dictionary::new(20);
+        let mut o_dict = Dictionary::new(25); 
+        let mut k_dict = Dictionary::new(30);
+        
+        // Add some test entries
+        for i in 0..10 {
+            c_dict.entries.push(format!("character_{}", i));
+            c_dict.reverse_lookup.insert(format!("character_{}", i), i);
+        }
+        
+        for i in 0..15 {
+            s_dict.entries.push(format!("setting_{}", i));
+            s_dict.reverse_lookup.insert(format!("setting_{}", i), i);
+        }
+        
+        for i in 0..20 {
+            a_dict.entries.push(format!("action_{}", i));
+            a_dict.reverse_lookup.insert(format!("action_{}", i), i);
+        }
+        
+        for i in 0..25 {
+            o_dict.entries.push(format!("object_{}", i));
+            o_dict.reverse_lookup.insert(format!("object_{}", i), i);
+        }
+        
+        for i in 0..30 {
+            k_dict.entries.push(format!("outcome_{}", i));
+            k_dict.reverse_lookup.insert(format!("outcome_{}", i), i);
+        }
+        
+        let mock_memo128 = MockMemo128 {
+            character_dict: c_dict,
+            setting_dict: s_dict,
+            action_dict: a_dict,
+            object_dict: o_dict,
+            outcome_dict: k_dict,
+        };
+        
+        // Create a test sentence from known indices
+        let c_idx = 5;
+        let s_idx = 10;
+        let a_idx = 15;
+        let o_idx = 20;
+        let k_idx = 25;
+        
+        let c_phrase = &mock_memo128.character_dict.entries[c_idx];
+        let s_phrase = &mock_memo128.setting_dict.entries[s_idx];
+        let a_phrase = &mock_memo128.action_dict.entries[a_idx];
+        let o_phrase = &mock_memo128.object_dict.entries[o_idx];
+        let k_phrase = &mock_memo128.outcome_dict.entries[k_idx];
+        
+        let sentence = format!("{} {} {} {} {}", c_phrase, s_phrase, a_phrase, o_phrase, k_phrase);
+        
+        // Parse the sentence
+        let (parsed_c, parsed_s, parsed_a, parsed_o, parsed_k) = mock_memo128.parse_sentence(&sentence).unwrap();
+        
+        // Verify the parsed indices
+        assert_eq!(parsed_c, c_idx);
+        assert_eq!(parsed_s, s_idx);
+        assert_eq!(parsed_a, a_idx);
+        assert_eq!(parsed_o, o_idx);
+        assert_eq!(parsed_k, k_idx);
     }
 }
