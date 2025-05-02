@@ -79,7 +79,7 @@ Fuzzy decoding may return multiple possible matches if the imperfect sentences c
 
 ## Requirements
 
-- Rust 1.74+
+- Rust 1.81+
 - Five dictionary files in the current directory:
     - `character_10bit.txt` (1024 entries)
     - `setting_10bit.txt` (1024 entries)
