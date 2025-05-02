@@ -49,6 +49,34 @@ cargo run -- decode \
 
 Make sure to quote each sentence and provide all three sentences in the correct order.
 
+### Fuzzy decoding for imperfect sentences
+
+Memo128 provides fuzzy decoding capabilities to handle sentences with typos, minor rephrasing, or other imperfections:
+
+```bash
+cargo run -- fuzzy-decode --max-distance 1 \
+  "a brave mouze inside a cosmic cathedral disconnected a question of time but it was already too late" \
+  "a worried parent within the cosmic algorithm accepted a mathematical impossibility as code predicted" \
+  "the fjord elder inside a particle accelerator stole a reality glitch rebooting the system"
+```
+
+```bash
+cargo run -- fuzzy-decode --max-distance 3 \
+  "a brave mouse inside the cosmic cathedral disconnected a question of time but it was already too late" \
+  "a worried parent within the cosmic algorithm accepted a mathematical impossibility as code predicted" \
+  "the fjord elder inside a particle accelerator stole a reality glitch rebooting the system"
+```
+
+The `--max-distance` parameter specifies the maximum Levenshtein distance allowed when matching sentence components
+against
+dictionary entries. Higher values allow more flexibility but may increase computation time and false matches:
+
+- `--max-distance 1`: Handles minor typos (e.g., "mouze" instead of "mouse")
+- `--max-distance 2`: Handles word form changes (e.g., "rebooting the systems" vs "rebooting the system")
+- `--max-distance 3+`: Handles more extensive rephrasing but may be slow and less accurate
+
+Fuzzy decoding may return multiple possible matches if the imperfect sentences can be interpreted in different ways.
+
 ## Requirements
 
 - Rust 1.74+
