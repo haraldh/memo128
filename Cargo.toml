@@ -1,0 +1,9 @@
+[package]
+name = "memo128"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sha2 = "0.10.9"
+num-bigint = "0.4.6"
+tempfile = "3.19.1"

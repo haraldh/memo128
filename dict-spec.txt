@@ -1,0 +1,90 @@
+Specification for Dictionary Content Creation
+
+    Version: 6.3
+
+    Date: May 2, 2025 (Context Date: Friday, May 2, 2025, 9:48 AM CEST)
+
+    Reference: System Specification "128-bit Number + 7-bit Checksum to 3 Natural Language Sentences Encoder/Decoder", Version 6.2
+
+    Author: Gemini AI
+
+1. Overview
+
+1.1. Purpose: This document provides guidelines and technical requirements for creating the content of the five dictionary files used by the referenced number encoding/decoding system (Version 6.2). The system converts a 128-bit number into three memorable sentences, each structured with five components: Character, Setting, Action, Object/Theme, and Outcome.
+
+1.2. Importance of Content: The quality, distinctiveness, and memorability of the entries in these dictionary files directly impact the readability and mnemonic effectiveness of the generated sentences. While the system will function technically with any unique strings, well-crafted content significantly enhances the system's usability.
+
+2. General Requirements
+
+2.1. File Format: Plain text (.txt).
+
+2.2. Character Encoding: UTF-8 is required to ensure broad compatibility.
+
+2.3. Entry Format:
+* Each file must contain one dictionary entry per line.
+* The line number corresponds to the entry's zero-based index (Line 1 = Index 0, Line 2 = Index 1, etc.).
+* Entries MAY contain internal spaces to form natural language phrases (e.g., "a hidden map", "in the deep forest").
+* Do NOT use underscores (_) as a replacement for spaces or for parsing purposes. Underscores should only appear if they are part of a standard word or concept (e.g., "state-of-the-art").
+* Entries must NOT have leading or trailing whitespace. Use text processing tools to trim whitespace from each line.
+* Do not include empty lines within the required number of entries.
+
+2.4. Uniqueness: All entries within a single dictionary file MUST be unique. Case sensitivity should be assumed for uniqueness checking unless the main implementation specifies otherwise (recommend creating all entries in lowercase for consistency and to avoid potential case-related uniqueness issues). Duplicate entries will cause decoding failures. Use tools (e.g., sort | uniq -d on Linux/macOS, spreadsheet functions, custom scripts) to verify uniqueness.
+
+2.5. Language: All entries should be in English.
+
+3. Specific File Requirements
+
+The following five dictionary files must be created:
+
+3.1. character_10bit.txt
+* Required Entries: Exactly 1,024 unique lines.
+* Content Guidance: Describe characters (people, animals, mythical beings, roles, archetypes, personified concepts). Aim for variety and distinctiveness. Consider using adjectives or short descriptors.
+* Examples: "a forgetful wizard", "the last star pilot", "three blind mice", "Queen Mab", "a talking cat", "the algorithm", "a cheerful robot", "Sherlock Holmes", "my neighbour's dog", "the concept of zero".
+
+3.2. setting_10bit.txt
+* Required Entries: Exactly 1,024 unique lines.
+* Content Guidance: Describe locations, environments, times, contexts, or moods. Prepositional phrases are highly effective (e.g., starting with "in", "on", "under", "during", "near"). Aim for diverse settings – physical, temporal, abstract.
+* Examples: "on a lonely spaceship", "deep within the volcano", "during the eclipse", "in 1920s Paris", "at the edge of reality", "under the neon sign", "beside the endless library", "while debugging code", "in a lucid dream", "just before dawn".
+
+3.3. action_8bit.txt
+* Required Entries: Exactly 256 unique lines.
+* Content Guidance: Provide verbs or action phrases. Using a consistent tense, such as simple past tense, is strongly recommended for narrative flow (e.g., "discovered", "jumped", "ignored"). Include a mix of simple and more descriptive actions.
+* Examples: "calculated", "patiently waited for", "suddenly remembered", "ignored", "investigated", "built", "searched for", "contacted", "ate", "lost", "found", "teleported to", "dreamed about", "challenged".
+
+3.4. object_9bit.txt
+* Required Entries: Exactly 512 unique lines.
+* Content Guidance: List nouns representing concrete objects, abstract concepts, goals, or themes that can logically (or interestingly illogically) follow an action. Include articles ("a", "an", "the") where appropriate for natural language.
+* Examples: "the silver key", "a map to nowhere", "quantum entanglement", "the final password", "her own reflection", "a moment of silence", "the missing piece", "three cryptic symbols", "an impossible choice", "the ship's logbook", "a recurring dream".
+
+3.5. outcome_8bit.txt
+* Required Entries: Exactly 256 unique lines.
+* Content Guidance: Provide phrases describing the result, consequence, or closing state related to the action and object. These often start with conjunctions (and, but, so, until, which) or indicate the state after the action.
+* Examples: "and saved everyone", "but the door was locked", "so the journey began", "which solved the puzzle", "until the sun rose", "revealing a secret passage", "much to everyone's surprise", "causing a paradox", "then silence fell", "as predicted by the prophecy", "and nothing happened".
+
+4. Quality Guidelines
+
+   Memorability: Use vivid, concrete, or evocative language where possible. Avoid overly generic or bland terms.
+
+   Distinction: Entries within a category should be clearly different from one another to avoid confusion. Ensure phrases intended to be different are not too similar sounding or looking.
+
+   Ambiguity: Avoid entries that could be easily misinterpreted as belonging to a different category (though some overlap, especially for Objects/Themes, is inevitable).
+
+   Length: While entries can be multi-word, keep them reasonably concise for readability within the sentence structure. Very long entries might make sentences unwieldy.
+
+   Consistency: Maintain a consistent style where appropriate (e.g., tense for Actions, format for Settings). Using lowercase for all entries is recommended.
+
+5. Validation and Delivery
+
+   Validation: Before finalizing, creators MUST verify:
+
+        Each file has the exact number of required lines.
+
+        All entries within each file are unique (case-insensitively if possible, definitively if only lowercase is used).
+
+        Files are saved as plain text with UTF-8 encoding.
+
+        Entries are free of leading/trailing whitespace.
+
+        Entries use spaces, not underscores, for multi-word phrases.
+
+   Delivery: Deliver the five .txt files named exactly as specified in Section 3.
