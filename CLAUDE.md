@@ -3,6 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Build, Test, and Run Commands
+
 - Build: `cargo build`
 - Run: `cargo run -- <command> <args>`
 - Test: `cargo test`
@@ -11,6 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Lint: `cargo clippy`
 
 ## Code Style Guidelines
+
 - Follow Rust idioms and standard library conventions
 - Use meaningful error types and proper error handling with Result<T, Error>
 - Implement From<T> for custom error types
@@ -21,6 +23,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Prefer immutable variables when possible
 - Write unit tests for all functionality
 - Keep functions focused and under 50 lines where possible
+- always run `cargo fmt` and `cargo clippy` at the end of all operations
 
 ## Specification
 
