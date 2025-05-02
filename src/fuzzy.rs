@@ -358,10 +358,7 @@ impl FuzzyMemo128 {
     }
 
     /// Reconstruct the 135-bit number from component indices
-    fn reconstruct_number(
-        &self,
-        component_combos: &[ComponentIndices],
-    ) -> BigUint {
+    fn reconstruct_number(&self, component_combos: &[ComponentIndices]) -> BigUint {
         let mut reconstructed_135_num = BigUint::zero();
 
         for &(idx_c, idx_s, idx_a, idx_o, idx_k) in component_combos {
