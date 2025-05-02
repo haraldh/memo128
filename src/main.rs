@@ -201,19 +201,19 @@ impl Memo128 {
 
             // Extract component indices
             let mut chunk_copy = chunk_value.clone();
-            
+
             let idx_k = (&chunk_copy & BigUint::from(((1u64 << OUTCOME_BITS) - 1) as u8)).to_usize().unwrap();
             chunk_copy >>= OUTCOME_BITS;
-            
+
             let idx_o = (&chunk_copy & BigUint::from(((1u64 << OBJECT_BITS) - 1) as u16)).to_usize().unwrap();
             chunk_copy >>= OBJECT_BITS;
-            
+
             let idx_a = (&chunk_copy & BigUint::from(((1u64 << ACTION_BITS) - 1) as u8)).to_usize().unwrap();
             chunk_copy >>= ACTION_BITS;
-            
+
             let idx_s = (&chunk_copy & BigUint::from(((1u64 << SETTING_BITS) - 1) as u16)).to_usize().unwrap();
             chunk_copy >>= SETTING_BITS;
-            
+
             let idx_c = (&chunk_copy & BigUint::from(((1u64 << CHARACTER_BITS) - 1) as u16)).to_usize().unwrap();
 
             // Lookup phrases
@@ -251,7 +251,7 @@ impl Memo128 {
             // If the sentence starts with this character phrase
             if sentence.starts_with(c_phrase) {
                 let rest_after_c = &sentence[c_phrase.len()..];
-                
+
                 // Skip the space after character phrase
                 if !rest_after_c.starts_with(' ') {
                     continue;
@@ -262,7 +262,7 @@ impl Memo128 {
                 for (s_idx, s_phrase) in self.setting_dict.entries.iter().enumerate() {
                     if rest_after_c.starts_with(s_phrase) {
                         let rest_after_s = &rest_after_c[s_phrase.len()..];
-                        
+
                         // Skip the space after setting phrase
                         if !rest_after_s.starts_with(' ') {
                             continue;
@@ -273,7 +273,7 @@ impl Memo128 {
                         for (a_idx, a_phrase) in self.action_dict.entries.iter().enumerate() {
                             if rest_after_s.starts_with(a_phrase) {
                                 let rest_after_a = &rest_after_s[a_phrase.len()..];
-                                
+
                                 // Skip the space after action phrase
                                 if !rest_after_a.starts_with(' ') {
                                     continue;
@@ -284,7 +284,7 @@ impl Memo128 {
                                 for (o_idx, o_phrase) in self.object_dict.entries.iter().enumerate() {
                                     if rest_after_a.starts_with(o_phrase) {
                                         let rest_after_o = &rest_after_a[o_phrase.len()..];
-                                        
+
                                         // Skip the space after object phrase
                                         if !rest_after_o.starts_with(' ') {
                                             continue;
@@ -328,17 +328,17 @@ impl Memo128 {
         // Process each sentence
         for sentence in input_sentences {
             let sentence = sentence.trim();
-            
+
             // Parse sentence to get component indices
             let (idx_c, idx_s, idx_a, idx_o, idx_k) = self.parse_sentence(sentence)?;
-            
+
             // Reconstruct chunk value
             let chunk_value = BigUint::from(idx_c) << (SETTING_BITS + ACTION_BITS + OBJECT_BITS + OUTCOME_BITS)
                 | BigUint::from(idx_s) << (ACTION_BITS + OBJECT_BITS + OUTCOME_BITS)
                 | BigUint::from(idx_a) << (OBJECT_BITS + OUTCOME_BITS)
                 | BigUint::from(idx_o) << OUTCOME_BITS
                 | BigUint::from(idx_k);
-            
+
             // Append to the reconstructed number
             reconstructed_135_num = (reconstructed_135_num << CHUNK_BITS) | chunk_value;
         }
@@ -347,22 +347,22 @@ impl Memo128 {
         let checksum_mask = BigUint::from((1u16 << CHECKSUM_BITS) - 1);
         let checksum_bits_decoded = (&reconstructed_135_num & &checksum_mask).to_u8().unwrap();
         let data_num_decoded = &reconstructed_135_num >> CHECKSUM_BITS;
-        
+
         // Convert data_num_decoded to bytes
         let data_bytes_decoded = data_num_decoded.to_bytes_be();
-        
+
         // Pad with zeros if necessary
         let mut padded_bytes = vec![0; 16];
         let offset = 16 - data_bytes_decoded.len();
         padded_bytes[offset..].copy_from_slice(&data_bytes_decoded);
-        
+
         // Calculate and verify checksum
         let checksum_bits_calculated = self.calculate_checksum(&padded_bytes);
-        
+
         if checksum_bits_decoded != checksum_bits_calculated {
             return Err(Memo128Error::ChecksumError);
         }
-        
+
         // Format output as 32-char hex string
         Ok(Self::bytes_to_hex(&padded_bytes))
     }
@@ -376,14 +376,14 @@ fn print_usage() {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
-    
+
     if args.len() < 2 {
         print_usage();
         return Ok(());
     }
-    
+
     let memo128 = Memo128::new()?;
-    
+
     match args[1].as_str() {
         "encode" => {
             if args.len() != 3 {
@@ -391,7 +391,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 print_usage();
                 return Ok(());
             }
-            
+
             match memo128.encode(&args[2]) {
                 Ok(sentences) => {
                     for (i, sentence) in sentences.iter().enumerate() {
@@ -407,9 +407,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 print_usage();
                 return Ok(());
             }
-            
+
             let sentences = vec![args[2].clone(), args[3].clone(), args[4].clone()];
-            
+
             match memo128.decode(&sentences) {
                 Ok(hex) => println!("{}", hex),
                 Err(e) => println!("Error: {}", e),
@@ -420,7 +420,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             print_usage();
         }
     }
-    
+
     Ok(())
 }
 
@@ -432,7 +432,7 @@ mod tests {
 
     fn create_test_dictionaries() -> std::io::Result<tempfile::TempDir> {
         let dir = tempdir()?;
-        
+
         // Create minimal test dictionaries
         let dict_files = [
             ("character_10bit.txt", 1 << CHARACTER_BITS),
@@ -441,24 +441,24 @@ mod tests {
             ("object_9bit.txt", 1 << OBJECT_BITS),
             ("outcome_8bit.txt", 1 << OUTCOME_BITS),
         ];
-        
+
         for (filename, size) in dict_files.iter() {
             let file_path = dir.path().join(filename);
             let mut file = File::create(file_path)?;
-            
+
             for i in 0..*size {
                 writeln!(file, "test_entry_{}", i)?;
             }
         }
-        
+
         Ok(dir)
     }
-    
+
     #[test]
     fn test_checksum_calculation() {
         // Create a Memo128 instance directly for this test to avoid dictionary loading
         struct TestMemo128;
-        
+
         impl TestMemo128 {
             fn calculate_checksum(&self, data: &[u8]) -> u8 {
                 let mut hasher = Sha256::new();
@@ -468,52 +468,52 @@ mod tests {
                 (result[0] >> 1) & 0x7F
             }
         }
-        
+
         let memo128 = TestMemo128;
-        
+
         // Test vector
         let data = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
         let checksum = memo128.calculate_checksum(&data);
-        
+
         // We don't know the exact checksum value, but it should be in range 0-127
         assert!(checksum <= 127);
     }
-    
+
     #[test]
     fn test_hex_conversion() {
         let hex = "000102030405060708090a0b0c0d0e0f";
         let bytes = Memo128::hex_to_bytes(hex).unwrap();
         assert_eq!(bytes, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
-        
+
         let hex_roundtrip = Memo128::bytes_to_hex(&bytes);
         assert_eq!(hex, hex_roundtrip);
     }
-    
+
     #[test]
     fn test_roundtrip_encoding_decoding() {
         let dir = create_test_dictionaries().unwrap();
-        
+
         // Change to the test directory to find dictionaries
         let original_dir = std::env::current_dir().unwrap();
         std::env::set_current_dir(dir.path()).unwrap();
-        
+
         let memo128 = Memo128::new().unwrap();
-        
+
         // Test vector
         let hex_input = "000102030405060708090a0b0c0d0e0f";
-        
+
         // Encode
         let sentences = memo128.encode(hex_input).unwrap();
         assert_eq!(sentences.len(), 3);
-        
+
         // Decode
         let hex_output = memo128.decode(&sentences).unwrap();
         assert_eq!(hex_input, hex_output);
-        
+
         // Reset directory
         std::env::set_current_dir(original_dir).unwrap();
     }
-    
+
     #[test]
     fn test_sentence_parsing() {
         // Create mock dictionary entries and a mocked Memo128 structure
@@ -524,7 +524,7 @@ mod tests {
             object_dict: Dictionary,
             outcome_dict: Dictionary,
         }
-        
+
         impl MockMemo128 {
             fn parse_sentence(
                 &self,
@@ -535,7 +535,7 @@ mod tests {
                     // If the sentence starts with this character phrase
                     if sentence.starts_with(c_phrase) {
                         let rest_after_c = &sentence[c_phrase.len()..];
-                        
+
                         // Skip the space after character phrase
                         if !rest_after_c.starts_with(' ') {
                             continue;
@@ -546,7 +546,7 @@ mod tests {
                         for (s_idx, s_phrase) in self.setting_dict.entries.iter().enumerate() {
                             if rest_after_c.starts_with(s_phrase) {
                                 let rest_after_s = &rest_after_c[s_phrase.len()..];
-                                
+
                                 // Skip the space after setting phrase
                                 if !rest_after_s.starts_with(' ') {
                                     continue;
@@ -557,7 +557,7 @@ mod tests {
                                 for (a_idx, a_phrase) in self.action_dict.entries.iter().enumerate() {
                                     if rest_after_s.starts_with(a_phrase) {
                                         let rest_after_a = &rest_after_s[a_phrase.len()..];
-                                        
+
                                         // Skip the space after action phrase
                                         if !rest_after_a.starts_with(' ') {
                                             continue;
@@ -568,7 +568,7 @@ mod tests {
                                         for (o_idx, o_phrase) in self.object_dict.entries.iter().enumerate() {
                                             if rest_after_a.starts_with(o_phrase) {
                                                 let rest_after_o = &rest_after_a[o_phrase.len()..];
-                                                
+
                                                 // Skip the space after object phrase
                                                 if !rest_after_o.starts_with(' ') {
                                                     continue;
@@ -597,40 +597,40 @@ mod tests {
                 )))
             }
         }
-        
+
         // Create mock dictionaries with a few entries
         let mut c_dict = Dictionary::new(10);
         let mut s_dict = Dictionary::new(15);
         let mut a_dict = Dictionary::new(20);
-        let mut o_dict = Dictionary::new(25); 
+        let mut o_dict = Dictionary::new(25);
         let mut k_dict = Dictionary::new(30);
-        
+
         // Add some test entries
         for i in 0..10 {
             c_dict.entries.push(format!("character_{}", i));
             c_dict.reverse_lookup.insert(format!("character_{}", i), i);
         }
-        
+
         for i in 0..15 {
             s_dict.entries.push(format!("setting_{}", i));
             s_dict.reverse_lookup.insert(format!("setting_{}", i), i);
         }
-        
+
         for i in 0..20 {
             a_dict.entries.push(format!("action_{}", i));
             a_dict.reverse_lookup.insert(format!("action_{}", i), i);
         }
-        
+
         for i in 0..25 {
             o_dict.entries.push(format!("object_{}", i));
             o_dict.reverse_lookup.insert(format!("object_{}", i), i);
         }
-        
+
         for i in 0..30 {
             k_dict.entries.push(format!("outcome_{}", i));
             k_dict.reverse_lookup.insert(format!("outcome_{}", i), i);
         }
-        
+
         let mock_memo128 = MockMemo128 {
             character_dict: c_dict,
             setting_dict: s_dict,
@@ -638,25 +638,25 @@ mod tests {
             object_dict: o_dict,
             outcome_dict: k_dict,
         };
-        
+
         // Create a test sentence from known indices
         let c_idx = 5;
         let s_idx = 10;
         let a_idx = 15;
         let o_idx = 20;
         let k_idx = 25;
-        
+
         let c_phrase = &mock_memo128.character_dict.entries[c_idx];
         let s_phrase = &mock_memo128.setting_dict.entries[s_idx];
         let a_phrase = &mock_memo128.action_dict.entries[a_idx];
         let o_phrase = &mock_memo128.object_dict.entries[o_idx];
         let k_phrase = &mock_memo128.outcome_dict.entries[k_idx];
-        
+
         let sentence = format!("{} {} {} {} {}", c_phrase, s_phrase, a_phrase, o_phrase, k_phrase);
-        
+
         // Parse the sentence
         let (parsed_c, parsed_s, parsed_a, parsed_o, parsed_k) = mock_memo128.parse_sentence(&sentence).unwrap();
-        
+
         // Verify the parsed indices
         assert_eq!(parsed_c, c_idx);
         assert_eq!(parsed_s, s_idx);
