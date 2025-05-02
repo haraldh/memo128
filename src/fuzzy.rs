@@ -189,13 +189,13 @@ impl FuzzyMemo128 {
     }
 
     /// Find all possible matches within the given Levenshtein distance
-    /// 
+    ///
     /// # Arguments
     ///
     /// * `text` - The text segment to find matches for
     /// * `dictionary` - The dictionary to search in
     /// * `max_distance` - Maximum allowed Levenshtein distance
-    /// 
+    ///
     /// # Returns
     ///
     /// A vector of tuples containing (dictionary index, Levenshtein distance, entry length)
@@ -244,7 +244,7 @@ impl FuzzyMemo128 {
                 ordering => ordering,
             }
         });
-        
+
         matches
     }
 
@@ -301,10 +301,10 @@ impl FuzzyMemo128 {
                     sentence.len(),
                     // Use different max lengths based on dictionary expected entry size
                     match component_idx {
-                        0 => 50, // Character (more likely to be longer)
-                        1 => 50, // Setting (can be longer phrase)
-                        2 => 30, // Action (usually shorter)
-                        3 => 40, // Object (medium length)
+                        0 => 50,  // Character (more likely to be longer)
+                        1 => 50,  // Setting (can be longer phrase)
+                        2 => 30,  // Action (usually shorter)
+                        3 => 40,  // Object (medium length)
                         _ => 100, // Fallback (shouldn't happen)
                     },
                 )
@@ -315,7 +315,7 @@ impl FuzzyMemo128 {
             // 2. Try breaking at spaces for natural word boundaries
             // 3. Try word sequences of varying lengths for better phrase detection
             let mut segment_points = Vec::new();
-            
+
             if component_idx == 4 {
                 // Last component - use all remaining text
                 segment_points.push(sentence.len());
@@ -326,27 +326,27 @@ impl FuzzyMemo128 {
                     .filter(|&(_, c)| c == ' ')
                     .map(|(i, _)| i)
                     .collect();
-                
+
                 // For components other than last one, try different segmentation strategies
                 if !space_positions.is_empty() {
                     // Try segmenting at different word boundaries
-                    // 1 word, 2 words, 3 words, etc. 
-                    for i in 0..min(5, space_positions.len()) {
-                        segment_points.push(space_positions[i]);
+                    // 1 word, 2 words, 3 words, etc.
+                    for i in space_positions.iter().take(min(5, space_positions.len())) {
+                        segment_points.push(space_positions[*i]);
                     }
-                    
+
                     // Also add some longer segments to try
                     if space_positions.len() >= 2 {
                         for i in (2..min(10, space_positions.len())).step_by(2) {
                             segment_points.push(space_positions[i]);
                         }
                     }
-                    
+
                     // Also add full sentence if it's within reasonable length
                     if sentence.len() <= max_segment_len {
                         segment_points.push(sentence.len());
                     }
-                    
+
                     // Sort and deduplicate
                     segment_points.sort();
                     segment_points.dedup();
@@ -421,7 +421,7 @@ impl FuzzyMemo128 {
 
                     // Remove this index before trying the next match
                     current_indices.pop();
-                    
+
                     // If we already have a significant number of results, stop adding more
                     // This prevents excessive recursion while still finding good matches
                     if results.len() >= 50 {
@@ -522,7 +522,7 @@ impl FuzzyMemo128 {
                 // Replace multiple consecutive spaces with a single space
                 let mut normalized = String::with_capacity(trimmed.len());
                 let mut last_was_space = false;
-                
+
                 for c in trimmed.chars() {
                     if c.is_whitespace() {
                         if !last_was_space {
@@ -534,7 +534,7 @@ impl FuzzyMemo128 {
                         last_was_space = false;
                     }
                 }
-                
+
                 normalized
             })
             .collect();
@@ -545,17 +545,19 @@ impl FuzzyMemo128 {
         for (i, sentence) in normalized_sentences.iter().enumerate() {
             if sentence.is_empty() {
                 return Err(Memo128Error::ParsingError(format!(
-                    "Sentence {} is empty after normalization", i + 1
+                    "Sentence {} is empty after normalization",
+                    i + 1
                 )));
             }
-            
+
             let candidates = self.fuzzy_parse_sentence(sentence);
 
             if candidates.is_empty() {
                 // If any sentence has no plausible parsing, we can't proceed
                 return Err(Memo128Error::ParsingError(format!(
                     "No fuzzy matches found for sentence {}: {}",
-                    i + 1, sentence
+                    i + 1,
+                    sentence
                 )));
             }
 
@@ -566,7 +568,7 @@ impl FuzzyMemo128 {
             } else {
                 candidates
             };
-            
+
             sentence_candidates.push(limited_candidates);
         }
 
@@ -574,10 +576,11 @@ impl FuzzyMemo128 {
         let mut valid_hex_results = Vec::new();
 
         // Calculate the total number of combinations
-        let total_combinations: usize = sentence_candidates.iter()
+        let total_combinations: usize = sentence_candidates
+            .iter()
             .map(|candidates| candidates.len())
             .product();
-            
+
         // If we have too many combinations, return an error to prevent excessive computation
         if total_combinations > 1_000_000 {
             return Err(Memo128Error::ParsingError(format!(
@@ -596,7 +599,7 @@ impl FuzzyMemo128 {
 
         // Sort results to ensure stable output across runs
         valid_hex_results.sort();
-        
+
         // Limit the number of results if we have too many
         let max_results = 100;
         if valid_hex_results.len() > max_results {

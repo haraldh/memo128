@@ -97,20 +97,20 @@ fn test_fuzzy_decode_word_change() -> Result<(), Box<dyn std::error::Error>> {
 
     // Test replacing a word in each sentence
     let mut modified_sentences = Vec::new();
-    
+
     for sentence in &sentences {
         let parts: Vec<String> = sentence.split(' ').map(String::from).collect();
         if parts.len() > 2 {
             // Replace a word in the middle
             let mid_idx = parts.len() / 2;
             let mut modified_parts = parts.clone();
-            
+
             // Replace with a similar but different word
             if parts[mid_idx].len() > 3 {
                 // Change just a single character in the middle of the word
                 let mid_char_pos = parts[mid_idx].len() / 2;
                 let mut chars: Vec<char> = parts[mid_idx].chars().collect();
-                
+
                 // Make a minimal change to just one character
                 if mid_char_pos < chars.len() {
                     // If it's a vowel, replace with another vowel
@@ -121,7 +121,7 @@ fn test_fuzzy_decode_word_change() -> Result<(), Box<dyn std::error::Error>> {
                         chars[mid_char_pos] = next_char(chars[mid_char_pos]);
                     }
                 }
-                
+
                 modified_parts[mid_idx] = chars.into_iter().collect();
             } else {
                 // For short words, make a minimal change
@@ -131,7 +131,7 @@ fn test_fuzzy_decode_word_change() -> Result<(), Box<dyn std::error::Error>> {
                     modified_parts[mid_idx] = "xyz".to_string();
                 }
             }
-            
+
             // Reconstruct the sentence
             let modified = modified_parts.join(" ");
             modified_sentences.push(modified);
@@ -191,31 +191,35 @@ fn test_fuzzy_decode_multiple_changes() -> Result<(), Box<dyn std::error::Error>
 
     // Create modified sentences with multiple changes
     let mut modified_sentences = Vec::new();
-    
+
     for sentence in &sentences {
         // Add extra spaces in random positions
-        let spaced_sentence = sentence.chars()
-            .fold(String::new(), |mut acc, c| {
-                acc.push(c);
-                if c != ' ' && rand_bool(0.1) {
-                    acc.push(' ');
-                }
-                acc
-            });
-        
+        let spaced_sentence = sentence.chars().fold(String::new(), |mut acc, c| {
+            acc.push(c);
+            if c != ' ' && rand_bool(0.1) {
+                acc.push(' ');
+            }
+            acc
+        });
+
         // Change some characters
-        let modified = spaced_sentence.chars()
+        let modified = spaced_sentence
+            .chars()
             .map(|c| {
                 if rand_bool(0.1) {
-                    if "aeiou".contains(c) { 'o' } 
-                    else if c.is_alphabetic() { next_char(c) }
-                    else { c }
+                    if "aeiou".contains(c) {
+                        'o'
+                    } else if c.is_alphabetic() {
+                        next_char(c)
+                    } else {
+                        c
+                    }
                 } else {
                     c
                 }
             })
             .collect::<String>();
-            
+
         modified_sentences.push(modified);
     }
 
@@ -232,7 +236,7 @@ fn test_fuzzy_decode_multiple_changes() -> Result<(), Box<dyn std::error::Error>
             // Check if original hex is in the results
             let original_found = results.iter().any(|result| result == hex);
             println!("Original hex found: {}", original_found);
-            
+
             // This test is more lenient - we don't assert the original is found
             // as the changes might be too severe
 
@@ -253,11 +257,14 @@ fn test_fuzzy_decode_multiple_changes() -> Result<(), Box<dyn std::error::Error>
 // Helper function to simulate random boolean with probability
 fn rand_bool(probability: f64) -> bool {
     use std::time::{SystemTime, UNIX_EPOCH};
-    
+
     // Get a "random" number based on current time
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_nanos() as f64;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .subsec_nanos() as f64;
     let random_value = (now.sin().abs() * 43758.5453) % 1.0;
-    
+
     random_value < probability
 }
 
