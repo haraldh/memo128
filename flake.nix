@@ -31,7 +31,7 @@
             rust.fromRustupToolchainFile ./rust-toolchain
           else
             rust.stable.latest.default.override {
-              extensions = [ "rust-src" "rustfmt" ];
+              extensions = [ "rust-src" "rustfmt" "clippy" ];
             };
       };
 
