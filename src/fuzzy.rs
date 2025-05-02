@@ -331,8 +331,8 @@ impl FuzzyMemo128 {
                 if !space_positions.is_empty() {
                     // Try segmenting at different word boundaries
                     // 1 word, 2 words, 3 words, etc.
-                    for i in space_positions.iter().take(min(5, space_positions.len())) {
-                        segment_points.push(space_positions[*i]);
+                    for &pos in space_positions.iter().take(min(5, space_positions.len())) {
+                        segment_points.push(pos);
                     }
 
                     // Also add some longer segments to try
