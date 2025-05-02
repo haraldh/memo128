@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 description = "A library for encoding and decoding 128-bit data as mnemonic sentences"
 authors = ["memo128 developers"]
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/haraldh/memo128"
+homepage = "https://github.com/haraldh/memo128"
+keywords = ["mnemonic", "encoding", "cryptography", "memory", "seed"]
+categories = ["cryptography", "encoding", "command-line-utilities"]
 
 [lib]
 name = "memo128"
