@@ -7,6 +7,9 @@ use num_bigint::BigUint;
 use num_traits::{One, ToPrimitive, Zero};
 use sha2::{Digest, Sha256};
 
+// Expose fuzzy decoding
+pub mod fuzzy;
+
 // Constants for bit allocations
 pub const CHARACTER_BITS: u32 = 10;
 pub const SETTING_BITS: u32 = 10;
@@ -52,8 +55,8 @@ impl From<io::Error> for Memo128Error {
 
 // Dictionary struct for handling dictionary files
 pub struct Dictionary {
-    entries: Vec<String>,
-    reverse_lookup: HashMap<String, usize>,
+    pub entries: Vec<String>,
+    pub reverse_lookup: HashMap<String, usize>,
 }
 
 impl Dictionary {
@@ -127,6 +130,27 @@ impl Memo128 {
             object_dict: Dictionary::load("object_9bit.txt", 1 << OBJECT_BITS)?,
             outcome_dict: Dictionary::load("outcome_8bit.txt", 1 << OUTCOME_BITS)?,
         })
+    }
+    
+    // Access to dictionaries for fuzzy decoding
+    pub fn get_character_dict(&self) -> &Dictionary {
+        &self.character_dict
+    }
+    
+    pub fn get_setting_dict(&self) -> &Dictionary {
+        &self.setting_dict
+    }
+    
+    pub fn get_action_dict(&self) -> &Dictionary {
+        &self.action_dict
+    }
+    
+    pub fn get_object_dict(&self) -> &Dictionary {
+        &self.object_dict
+    }
+    
+    pub fn get_outcome_dict(&self) -> &Dictionary {
+        &self.outcome_dict
     }
 
     // Calculate 7-bit checksum from 128-bit data
